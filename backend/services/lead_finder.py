@@ -1,12 +1,35 @@
+import os
+from pathlib import Path
+
 import googlemaps
+
+from dotenv import load_dotenv
 from services.email_finder import find_email_from_website
 
-API_KEY = "AIzaSyCPhbLtBlsQM4MSqjHVgh2WqyNUYwOd-2E"
+BACKEND_ENV_PATH = Path(__file__).resolve().parents[1] / ".env"
+ROOT_ENV_PATH = Path(__file__).resolve().parents[2] / ".env"
 
-gmaps = googlemaps.Client(key=API_KEY)
+load_dotenv(ROOT_ENV_PATH)
+load_dotenv(BACKEND_ENV_PATH, override=True)
+
+GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
+
+
+def get_google_maps_client():
+    api_key = os.getenv("GOOGLE_MAPS_API_KEY") or GOOGLE_MAPS_API_KEY
+
+    if not api_key:
+        return None
+
+    return googlemaps.Client(key=api_key)
 
 
 def search_law_firms(keyword, city, state):
+    gmaps = get_google_maps_client()
+
+    if not gmaps:
+        return []
+
     query = f"{keyword} in {city}, {state}"
 
     places_result = gmaps.places(query=query)

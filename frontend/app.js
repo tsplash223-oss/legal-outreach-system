@@ -9,10 +9,45 @@ const state = {
   logsNewestFirst: true,
   firmFilter: "",
   previewFirmId: null,
-  isRefreshing: false
+  isRefreshing: false,
+  isDemoMode: false
 };
 
 const els = {};
+
+const DEMO_FIRMS = [
+  {
+    id: "demo-1",
+    firm_name: "Example Legal Group",
+    city: "Atlanta",
+    practice_area: "DUI attorney",
+    email: "intake@example.com",
+    phone: "555-0101",
+    website: "https://example.com",
+    status: "Not Contacted"
+  },
+  {
+    id: "demo-2",
+    firm_name: "Sample Defense Partners",
+    city: "Savannah",
+    practice_area: "Criminal defense",
+    email: null,
+    phone: "555-0102",
+    website: "https://example.org",
+    status: "Not Contacted"
+  }
+];
+
+const DEMO_LOGS = [
+  {
+    id: "demo-log-1",
+    firm_name: "Demo Outreach Record",
+    email: "client@example.com",
+    status: "Sent",
+    subject: "Sample outreach log",
+    sent_at: new Date().toISOString()
+  }
+];
 
 document.addEventListener("DOMContentLoaded", () => {
   cacheElements();
@@ -142,15 +177,28 @@ async function loadDashboard() {
 
     state.firms = Array.isArray(firms) ? firms : [];
     state.logs = Array.isArray(logs) ? logs : [];
+    state.isDemoMode = false;
 
     renderStats(stats || {});
     renderFirms();
     renderLogs();
     setStatus("online", "Prospective Client Outreach System online", `${state.firms.length} prospects loaded`);
   } catch (error) {
-    renderStats({});
-    renderErrorRows(error.message);
-    setStatus("offline", "API unavailable", "Start FastAPI or check the endpoint");
+    state.firms = DEMO_FIRMS;
+    state.logs = DEMO_LOGS;
+    state.isDemoMode = true;
+
+    renderStats({
+      total_firms: state.firms.length,
+      firms_with_emails: state.firms.filter(firm => firm.email).length,
+      emails_sent: state.firms.filter(firm => firm.status === "Email Sent").length,
+      not_contacted: state.firms.filter(firm => firm.status !== "Email Sent").length,
+      sent_logs: state.logs.filter(log => log.status === "Sent").length,
+      failed_logs: state.logs.filter(log => log.status === "Failed").length
+    });
+    renderFirms();
+    renderLogs();
+    setStatus("offline", "Static demo mode", "API unavailable");
     toast("Connection issue", error.message, "error");
   } finally {
     state.isRefreshing = false;
@@ -204,7 +252,8 @@ function renderFirms() {
     .map(firm => {
       const email = firm.email || "";
       const website = normalizeUrl(firm.website);
-      const canSend = Boolean(email) && firm.status !== "Email Sent";
+      const canContact = !state.isDemoMode;
+      const canSend = canContact && Boolean(email) && firm.status !== "Email Sent";
 
       return `
         <tr>
@@ -220,7 +269,7 @@ function renderFirms() {
           <td>${statusBadge(firm.status)}</td>
           <td>
             <div class="actions">
-              <button class="button button-ghost" type="button" data-action="preview" data-id="${firm.id}">Preview Letter</button>
+              <button class="button button-ghost" type="button" data-action="preview" data-id="${firm.id}" ${canContact ? "" : "disabled"}>Preview Letter</button>
               <button class="button button-ghost" type="button" data-action="send" data-id="${firm.id}" ${canSend ? "" : "disabled"}>Send Outreach</button>
               <button class="button button-ghost" type="button" data-action="website" data-url="${escapeAttr(website)}" ${website ? "" : "disabled"}>Open Website</button>
             </div>
