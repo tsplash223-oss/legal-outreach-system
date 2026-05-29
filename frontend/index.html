@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Green Light Prospective Client Outreach System</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Primary navigation">
+      <div class="brand">
+        <img src="logo.png" alt="Green Light Drivers Ed & DUI School LLC" class="brand-logo" />
+        <div class="brand-copy">
+          <strong>Green Light</strong>
+          <span>Prospective Client Outreach System</span>
+        </div>
+      </div>
+
+      <nav class="nav-list">
+        <a class="nav-link active" href="#dashboard" data-section="dashboard">
+          <span class="nav-icon">D</span>
+          Dashboard
+        </a>
+        <a class="nav-link" href="#search" data-section="search">
+          <span class="nav-icon">S</span>
+          Search Prospects
+        </a>
+        <a class="nav-link" href="#campaign" data-section="campaign">
+          <span class="nav-icon">C</span>
+          Run Campaign
+        </a>
+        <a class="nav-link" href="#firms" data-section="firms">
+          <span class="nav-icon">D</span>
+          Prospect Database
+        </a>
+        <a class="nav-link" href="#outreach" data-section="outreach">
+          <span class="nav-icon">O</span>
+          Outreach
+        </a>
+        <a class="nav-link" href="#logs" data-section="logs">
+          <span class="nav-icon">L</span>
+          Email Logs
+        </a>
+        <a class="nav-link" href="#settings" data-section="settings">
+          <span class="nav-icon">W</span>
+          Workspace
+        </a>
+      </nav>
+
+      <div class="sidebar-panel">
+        <span class="panel-kicker">System</span>
+        <strong>Prospective client outreach ready</strong>
+        <p>Prospect discovery, email finding, and outreach tracking are connected through FastAPI.</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="top-header" id="dashboard">
+        <div class="header-copy">
+          <span class="eyebrow">Green Light Drivers Ed & DUI School LLC</span>
+          <h1>Prospective Client Outreach Dashboard</h1>
+          <p>A business outreach platform that identifies prospective clients, locates contact information, and automates professional outreach campaigns on behalf of Green Light Drivers Ed & DUI School LLC.</p>
+        </div>
+
+        <div class="header-actions">
+          <div class="system-status" id="systemStatus" aria-live="polite">
+            <span class="status-dot"></span>
+            <div>
+              <strong>Checking API</strong>
+              <small>Connecting to outreach services</small>
+            </div>
+          </div>
+          <button class="button button-primary" id="refreshButton" type="button">
+            <span class="button-icon">R</span>
+            Refresh
+          </button>
+        </div>
+      </header>
+
+      <section class="stats-grid" aria-label="Outreach statistics">
+        <article class="stat-card">
+          <div class="stat-topline">
+            <span>Total Prospects</span>
+            <span class="metric-icon">TF</span>
+          </div>
+          <strong id="totalFirms">0</strong>
+          <p>Saved prospective clients</p>
+        </article>
+
+        <article class="stat-card">
+          <div class="stat-topline">
+            <span>Prospects With Emails</span>
+            <span class="metric-icon">EM</span>
+          </div>
+          <strong id="firmsWithEmails">0</strong>
+          <p>Ready for outreach</p>
+        </article>
+
+        <article class="stat-card">
+          <div class="stat-topline">
+            <span>Emails Sent</span>
+            <span class="metric-icon">SE</span>
+          </div>
+          <strong id="emailsSent">0</strong>
+          <p>Completed sends</p>
+        </article>
+
+        <article class="stat-card">
+          <div class="stat-topline">
+            <span>Not Contacted</span>
+            <span class="metric-icon">NC</span>
+          </div>
+          <strong id="notContacted">0</strong>
+          <p>Remaining opportunities</p>
+        </article>
+
+        <article class="stat-card stat-card-accent">
+          <div class="stat-topline">
+            <span>Success Rate</span>
+            <span class="metric-icon">SR</span>
+          </div>
+          <strong id="successRate">0%</strong>
+          <p>Sent logs versus failures</p>
+        </article>
+      </section>
+
+      <section class="panel campaign-panel" id="campaign">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">One-click automation</span>
+            <h2>Run Campaign</h2>
+          </div>
+          <span class="panel-badge">Search + Save + Outreach</span>
+        </div>
+
+        <div class="campaign-layout">
+          <form class="campaign-form" id="campaignForm">
+            <label class="field">
+              <span>Keyword</span>
+              <input id="campaignKeyword" type="text" value="DUI lawyer" placeholder="DUI lawyer" required />
+            </label>
+
+            <label class="field">
+              <span>City</span>
+              <input id="campaignCity" type="text" placeholder="Atlanta" required />
+            </label>
+
+            <label class="field">
+              <span>State</span>
+              <input id="campaignState" type="text" value="GA" placeholder="GA" maxlength="2" required />
+            </label>
+
+            <label class="field">
+              <span>Campaign limit</span>
+              <input id="campaignLimit" type="number" value="3" min="1" max="25" required />
+            </label>
+
+            <label class="field">
+              <span>Delay seconds</span>
+              <input id="campaignDelay" type="number" value="10" min="0" max="300" required />
+            </label>
+
+            <label class="toggle-field">
+              <input id="campaignSendImmediately" type="checkbox" checked />
+              <span class="toggle-track" aria-hidden="true"></span>
+              <span>
+                <strong>Send immediately</strong>
+                <small>Turn off to search, save, and preview eligible firms only.</small>
+              </span>
+            </label>
+
+            <div class="campaign-safety">
+              Campaigns send only to firms with emails and skip firms already contacted.
+            </div>
+
+            <button class="button button-primary campaign-submit" id="campaignButton" type="submit">
+              <span class="button-icon">C</span>
+              Run Campaign
+            </button>
+          </form>
+
+          <div class="campaign-report" id="campaignReport" aria-live="polite">
+            <div class="report-empty">
+              <strong>Campaign report</strong>
+              <span>Run a campaign to see searched, saved, eligible, sent, failed, and skipped prospects.</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="content-grid">
+        <article class="panel search-panel" id="search">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Lead discovery</span>
+              <h2>Search & Save Prospects</h2>
+            </div>
+            <span class="panel-badge">Google Places</span>
+          </div>
+
+          <form class="form-grid" id="searchForm">
+            <label class="field">
+              <span>Keyword</span>
+              <input id="keywordInput" type="text" value="DUI lawyer" placeholder="DUI lawyer" required />
+            </label>
+
+            <label class="field">
+              <span>City</span>
+              <input id="cityInput" type="text" placeholder="Atlanta" required />
+            </label>
+
+            <label class="field">
+              <span>State</span>
+              <input id="stateInput" type="text" value="GA" placeholder="GA" maxlength="2" required />
+            </label>
+
+            <button class="button button-primary form-submit" id="searchButton" type="submit">
+              <span class="button-icon">S</span>
+              Search
+            </button>
+          </form>
+
+          <div class="inline-feedback" id="searchMessage" role="status" aria-live="polite"></div>
+        </article>
+
+        <article class="panel outreach-panel" id="outreach">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Campaign control</span>
+              <h2>Batch Outreach</h2>
+            </div>
+            <span class="panel-badge">Gmail</span>
+          </div>
+
+          <form class="batch-form" id="batchForm">
+            <label class="field compact-field">
+              <span>Batch size</span>
+              <input id="batchLimit" type="number" value="3" min="1" max="25" />
+            </label>
+
+            <label class="field compact-field">
+              <span>Delay seconds</span>
+              <input id="delaySeconds" type="number" value="10" min="0" max="300" />
+            </label>
+
+            <button class="button button-dark" id="batchButton" type="submit">
+              <span class="button-icon">O</span>
+              Send Batch
+            </button>
+          </form>
+
+          <div class="progress-shell" aria-hidden="true">
+            <div class="progress-bar" id="batchProgress"></div>
+          </div>
+
+          <div class="result-summary" id="batchMessage" role="status" aria-live="polite">
+            <span>Ready to send controlled outreach to eligible prospects.</span>
+          </div>
+        </article>
+      </section>
+
+      <section class="panel table-panel" id="firms">
+        <div class="section-heading table-heading">
+          <div>
+            <span class="eyebrow">Prospect database</span>
+            <h2>Prospect Database</h2>
+          </div>
+          <div class="table-tools">
+            <label class="table-search">
+              <span>Filter prospects</span>
+              <input id="firmFilterInput" type="search" placeholder="Search name, email, city, status" />
+            </label>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Prospect Name</th>
+                <th>Email</th>
+                <th>Phone</th>
+                <th>Website</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="firmsTable">
+              <tr>
+                <td colspan="6">
+                  <div class="table-state">Loading prospects...</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel table-panel" id="logs">
+        <div class="section-heading table-heading">
+          <div>
+            <span class="eyebrow">Audit </span>
+            <h2>Email Logs</h2>
+          </div>
+          <button class="button button-secondary" id="sortLogsButton" type="button">Newest First</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Prospect</th>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Subject</th>
+                <th>Timestamp</th>
+              </tr>
+            </thead>
+            <tbody id="logsTable">
+              <tr>
+                <td colspan="5">
+                  <div class="table-state">Loading logs...</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="settings-panel" id="settings">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Workspace</span>
+            <h2>Workspace</h2>
+          </div>
+        </div>
+        <div class="settings-grid">
+          <div>
+            <span>API endpoint</span>
+            <strong id="apiEndpoint">Detecting...</strong>
+          </div>
+          <div>
+            <span>Business unit</span>
+            <strong>Green Light Drivers Ed & DUI School LLC</strong>
+          </div>
+          <div>
+            <span>Frontend</span>
+            <strong>Plain HTML,CSS,JS</strong>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="emailPreviewModal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="previewModalTitle">
+      <div class="modal-header">
+        <div>
+          <span class="eyebrow">Email preview</span>
+          <h2 id="previewModalTitle">Preview Letter</h2>
+        </div>
+        <button class="modal-close" id="previewCloseButton" type="button" aria-label="Close preview">×</button>
+      </div>
+
+      <div class="modal-meta">
+        <div>
+          <span>Prospect</span>
+          <strong id="previewFirmName">Loading...</strong>
+        </div>
+        <div>
+          <span>Subject</span>
+          <strong id="previewSubject">Loading...</strong>
+        </div>
+      </div>
+
+      <div class="email-preview-shell">
+        <iframe id="previewBodyFrame" title="Formatted email body preview"></iframe>
+      </div>
+
+      <div class="modal-message" id="previewMessage" role="status" aria-live="polite"></div>
+
+      <div class="modal-actions">
+        <button class="button button-secondary" id="previewCancelButton" type="button">Close</button>
+        <button class="button button-primary" id="previewSendButton" type="button">
+          <span class="button-icon">O</span>
+          Send Outreach
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite" aria-label="Notifications"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
