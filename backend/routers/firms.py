@@ -88,6 +88,164 @@ def search_and_save_firms(keyword: str, city: str, state: str, db: Session = Dep
     return saved_firms
 
 
+def campaign_firm_item(firm, reason: str | None = None, error: str | None = None):
+    item = {
+        "id": firm.id,
+        "firm": firm.firm_name,
+        "email": firm.email,
+        "city": firm.city,
+        "status": firm.status,
+    }
+
+    if reason:
+        item["reason"] = reason
+
+    if error:
+        item["error"] = error
+
+    return item
+
+
+@router.post("/run-campaign/")
+def run_campaign(
+    keyword: str,
+    city: str,
+    state: str,
+    limit: int = 3,
+    delay_seconds: int = 10,
+    send_immediately: bool = True,
+    db: Session = Depends(get_db)
+):
+    safe_limit = max(0, limit)
+    safe_delay_seconds = max(0, delay_seconds)
+
+    results = search_law_firms(keyword, city, state)
+    saved_firms = []
+    saved_count = 0
+    skipped = []
+
+    for firm in results:
+        firm_name = firm.get("firm_name")
+
+        if not firm_name:
+            skipped.append({
+                "firm": "Unknown firm",
+                "email": firm.get("email"),
+                "reason": "Missing firm name"
+            })
+            continue
+
+        existing_firm = db.query(models.Firm).filter(
+            models.Firm.firm_name == firm_name
+        ).first()
+
+        firm_data = schemas.FirmCreate(
+            firm_name=firm_name,
+            practice_area=keyword,
+            city=city,
+            phone=firm.get("phone"),
+            website=firm.get("website"),
+            email=firm.get("email"),
+            address=firm.get("address"),
+            rating=firm.get("rating"),
+            business_status=firm.get("business_status"),
+            status="Not Contacted"
+        )
+
+        saved_firm = crud.create_firm(db, firm_data)
+
+        if not existing_firm:
+            saved_count += 1
+
+        saved_firms.append(saved_firm)
+
+    eligible_firms = []
+
+    for firm in saved_firms:
+        if not firm.email:
+            skipped.append(campaign_firm_item(firm, "No email found"))
+            continue
+
+        if firm.status == "Email Sent":
+            skipped.append(campaign_firm_item(firm, "Already marked Email Sent"))
+            continue
+
+        eligible_firms.append(firm)
+
+    sent = []
+    failed = []
+    firms_to_send = eligible_firms[:safe_limit]
+
+    if safe_limit < len(eligible_firms):
+        for firm in eligible_firms[safe_limit:]:
+            skipped.append(campaign_firm_item(firm, "Campaign limit reached"))
+
+    if send_immediately:
+        for index, firm in enumerate(firms_to_send):
+            subject = "Green Light Drivers Ed & DUI School LLC Outreach"
+
+            try:
+                generated = generate_outreach_email(
+                    firm_name=firm.firm_name,
+                    city=firm.city,
+                    practice_area=firm.practice_area
+                )
+                subject = generated["subject"]
+
+                send_email(
+                    to_email=firm.email,
+                    subject=subject,
+                    body=generated["body"]
+                )
+
+                log = models.EmailLog(
+                    firm_id=firm.id,
+                    firm_name=firm.firm_name,
+                    email=firm.email,
+                    subject=subject,
+                    status="Sent",
+                    error_message=None
+                )
+
+                db.add(log)
+                firm.status = "Email Sent"
+                db.commit()
+
+                sent.append(campaign_firm_item(firm))
+
+            except Exception as e:
+                log = models.EmailLog(
+                    firm_id=firm.id,
+                    firm_name=firm.firm_name,
+                    email=firm.email,
+                    subject=subject,
+                    status="Failed",
+                    error_message=str(e)
+                )
+
+                db.add(log)
+                db.commit()
+
+                failed.append(campaign_firm_item(firm, error=str(e)))
+
+            if index < len(firms_to_send) - 1 and safe_delay_seconds > 0:
+                time.sleep(safe_delay_seconds)
+
+    return {
+        "searched_count": len(results),
+        "saved_count": saved_count,
+        "eligible_count": len(eligible_firms),
+        "sent_count": len(sent),
+        "failed_count": len(failed),
+        "skipped_count": len(skipped),
+        "send_immediately": send_immediately,
+        "sent": sent,
+        "failed": failed,
+        "skipped": skipped,
+        "eligible": [campaign_firm_item(firm) for firm in eligible_firms],
+    }
+
+
 @router.get("/{firm_id}/generate-email/")
 def generate_email_for_firm(firm_id: int, db: Session = Depends(get_db)):
     firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()

@@ -1,14 +1,23 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 import models
 from routers import firms
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Legal Outreach System API")
+app = FastAPI(title="Prospective Client Outreach System API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(firms.router)
 
 @app.get("/")
 def root():
-    return {"message": "Legal Outreach System API Running"}
+    return {"message": "Prospective Client Outreach System API Running"}
