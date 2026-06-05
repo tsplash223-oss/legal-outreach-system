@@ -10,7 +10,15 @@ app = FastAPI(title="Prospective Client Outreach System API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://legal-outreach-system.vercel.app",
+        "https://legal-outreach-system.onrender.com",
+        "http://127.0.0.1:5500",
+        "http://localhost:5500",
+        "file://",
+        "null",
+    ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

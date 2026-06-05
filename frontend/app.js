@@ -1,4 +1,12 @@
-const API_BASE = "http://127.0.0.1:8000";
+const LOCAL_API_BASE = "http://127.0.0.1:8000";
+const LIVE_API_BASE = "https://legal-outreach-system.onrender.com";
+
+const isLocalFrontend =
+  window.location.hostname === "127.0.0.1" ||
+  window.location.hostname === "localhost" ||
+  window.location.protocol === "file:";
+
+const API_BASE = isLocalFrontend ? LOCAL_API_BASE : LIVE_API_BASE;
 const DEMO_MODE = window.location.hostname.includes("github.io");
 
 const DEMO_ONLY_MESSAGE = "Demo only. Live sending is disabled.";
@@ -352,6 +360,16 @@ function setSystemStatus(mode, detail) {
   } else {
     setText("apiEndpoint", API_BASE);
   }
+}
+
+function getBackendUnavailableMessage() {
+  return isLocalFrontend
+    ? "Start FastAPI at http://127.0.0.1:8000 and refresh."
+    : "Backend unavailable. Live API connection failed. Please check the Render backend service.";
+}
+
+function setBackendUnavailableStatus() {
+  setSystemStatus("Backend Unavailable", getBackendUnavailableMessage());
 }
 
 function getTemplateBody(template) {
@@ -1042,9 +1060,9 @@ function renderTemplate(template) {
 
 function showBackendUnavailable(error) {
   backendConnected = false;
-  setSystemStatus("Backend Unavailable", "Start FastAPI at http://127.0.0.1:8000 and refresh.");
+  setBackendUnavailableStatus();
 
-  const errorMessage = "Backend unavailable. Start FastAPI at http://127.0.0.1:8000 and refresh to retry live mode.";
+  const errorMessage = getBackendUnavailableMessage();
   const details = error?.message ? ` (${error.message})` : "";
 
   const firmsTable = getElement("firmsTable");
@@ -1185,7 +1203,7 @@ async function updateFirmStatus(firmId, status) {
     showCrmStatusMessage("Status updated.", "success");
   } catch (error) {
     showCrmStatusMessage("Unable to update status. Please refresh and try again.", "error");
-    setSystemStatus("Backend Unavailable", "Status update failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
     await loadDashboard();
   }
 }
@@ -1281,7 +1299,7 @@ async function runAutoFollowUps() {
       result.textContent = "Automatic follow-up run failed. Make sure backend is running.";
       result.className = "auto-follow-up-result error";
     }
-    setSystemStatus("Backend Unavailable", "Automatic follow-up request failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1321,10 +1339,10 @@ async function checkReplies() {
     }
   } catch (error) {
     if (message) {
-      message.textContent = "Unable to check reply tracking. Make sure the backend is running at http://127.0.0.1:8000.";
+      message.textContent = `Unable to check reply tracking. ${getBackendUnavailableMessage()}`;
       message.className = "reply-status error";
     }
-    setSystemStatus("Backend Unavailable", "Reply tracking check failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   } finally {
     if (button) {
       button.disabled = false;
@@ -1393,7 +1411,7 @@ async function loadDashboard() {
     return;
   }
 
-  setSystemStatus("Checking API", "Connecting to http://127.0.0.1:8000");
+  setSystemStatus("Checking API", `Connecting to ${API_BASE}`);
 
   try {
     const [stats, analytics, firms, logs, template, followUps, autoFollowUpSettings, newsletterStats, newsletterContacts] = await Promise.all([
@@ -1421,7 +1439,7 @@ async function loadDashboard() {
     renderNewsletterStats(newsletterStats);
     renderNewsletterContacts(newsletterContactsCache);
     renderTemplate(template);
-    setSystemStatus("Live Backend Connected", "Using real FastAPI data from http://127.0.0.1:8000");
+    setSystemStatus("Live Backend Connected", `Using real FastAPI data from ${API_BASE}`);
     setText("searchMessage", "");
     setText("batchMessage", "Ready to send controlled outreach to eligible prospects.");
   } catch (error) {
@@ -1457,7 +1475,7 @@ async function searchAndSaveFirms() {
     await loadDashboard();
   } catch (error) {
     if (message) message.textContent = "Search failed. Make sure backend is running.";
-    setSystemStatus("Backend Unavailable", "Search failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1507,7 +1525,7 @@ async function runCampaign() {
         </div>
       `;
     }
-    setSystemStatus("Backend Unavailable", error.message || "Campaign request failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1544,7 +1562,7 @@ async function previewNewsletter() {
     showNewsletterMessage("Newsletter preview ready.", "success");
   } catch (error) {
     showNewsletterMessage("Unable to preview newsletter. Make sure backend is running.", "error");
-    setSystemStatus("Backend Unavailable", "Newsletter preview failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1574,7 +1592,7 @@ async function saveNewsletterDraft() {
     showNewsletterMessage(data.message || "Newsletter draft saved.", "success");
   } catch (error) {
     showNewsletterMessage("Unable to save newsletter draft. Make sure backend is running.", "error");
-    setSystemStatus("Backend Unavailable", "Newsletter draft failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1614,7 +1632,7 @@ async function sendNewsletter() {
     await loadDashboard();
   } catch (error) {
     showNewsletterMessage("Newsletter send failed. Make sure backend is running and Gmail settings are configured.", "error");
-    setSystemStatus("Backend Unavailable", "Newsletter send failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   } finally {
     if (button) {
       button.disabled = false;
@@ -1776,7 +1794,7 @@ async function sendOutreach(firmId) {
     await loadDashboard();
   } catch (error) {
     alert("Failed to send email. Check backend.");
-    setSystemStatus("Backend Unavailable", "Send request failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1805,7 +1823,7 @@ async function sendBatchOutreach() {
     await loadDashboard();
   } catch (error) {
     if (message) message.textContent = "Batch sending failed. Check backend.";
-    setSystemStatus("Backend Unavailable", "Batch send request failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1855,7 +1873,7 @@ async function resetCampaignData() {
       result.textContent = error.message || "Reset failed. Campaign data was not cleared.";
       result.className = "reset-campaign-result error";
     }
-    setSystemStatus("Backend Unavailable", "Campaign reset request failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   } finally {
     if (button) {
       button.disabled = false;
@@ -1904,7 +1922,7 @@ async function sendFollowUp(firmId) {
       message.textContent = "Follow-up failed. Make sure backend is running.";
       message.className = "inline-feedback error";
     }
-    setSystemStatus("Backend Unavailable", "Follow-up request failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1941,7 +1959,7 @@ async function previewLetter(firmId) {
     setText("previewSubject", "Preview unavailable");
     writeFrame("previewBodyFrame", emailHtmlFromText("Unable to generate preview. Make sure backend is running."));
     if (previewMessage) previewMessage.textContent = "Preview failed. Check backend.";
-    setSystemStatus("Backend Unavailable", "Preview request failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -1992,7 +2010,7 @@ async function saveTemplate() {
     if (message) message.textContent = "Template saved.";
   } catch (error) {
     if (message) message.textContent = "Template save failed. Check backend.";
-    setSystemStatus("Backend Unavailable", "Template save failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
@@ -2017,7 +2035,7 @@ async function activateTemplate() {
     if (message) message.textContent = "Template activated.";
   } catch (error) {
     if (message) message.textContent = "Template activation failed. Check backend.";
-    setSystemStatus("Backend Unavailable", "Template activation failed against http://127.0.0.1:8000");
+    setBackendUnavailableStatus();
   }
 }
 
