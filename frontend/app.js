@@ -7,6 +7,10 @@ const isLocalFrontend =
   window.location.protocol === "file:";
 
 const API_BASE = isLocalFrontend ? LOCAL_API_BASE : LIVE_API_BASE;
+
+window.API_BASE = API_BASE;
+console.log("Using API_BASE:", API_BASE);
+
 const DEMO_MODE = window.location.hostname.includes("github.io");
 
 const DEMO_ONLY_MESSAGE = "Demo only. Live sending is disabled.";
