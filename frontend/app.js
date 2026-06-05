@@ -1,17 +1,18 @@
-const LOCAL_API_BASE = "http://127.0.0.1:8000";
 const LIVE_API_BASE = "https://legal-outreach-system.onrender.com";
+const LOCAL_API_BASE = "http://127.0.0.1:8000";
 
 const isLocalFrontend =
-  window.location.hostname === "127.0.0.1" ||
   window.location.hostname === "localhost" ||
-  window.location.protocol === "file:";
+  window.location.hostname === "127.0.0.1";
 
 const API_BASE = isLocalFrontend ? LOCAL_API_BASE : LIVE_API_BASE;
 
 window.API_BASE = API_BASE;
+
+console.log("Frontend hostname:", window.location.hostname);
 console.log("Using API_BASE:", API_BASE);
 
-const DEMO_MODE = window.location.hostname.includes("github.io");
+const DEMO_MODE = false;
 
 const DEMO_ONLY_MESSAGE = "Demo only. Live sending is disabled.";
 const SIGNATURE_IMAGE_PLACEHOLDER = "{{signature_image}}";
