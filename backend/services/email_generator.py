@@ -1,98 +1,167 @@
-def generate_outreach_email(firm_name, city, practice_area):
+from html import escape
 
-    subject = "Professional Introduction - Green Light Drivers Ed & DUI School LLC"
+from database import SessionLocal
+import models
 
-    body = f"""
+
+DEFAULT_SUBJECT = "Professional Introduction - Green Light Drivers Ed & DUI School LLC"
+
+SIGNATURE_IMAGE_PLACEHOLDER = "{{signature_image}}"
+SIGNATURE_IMAGE_HTML = '<img src="cid:signature_image" alt="Signature" style="width:140px; max-width:140px; display:block; margin:8px 0 4px 0;">'
+
+DEFAULT_BODY_TEXT = """Dear {firm_name},
+
+We are reaching out to professional firms in the {city} area to introduce Green Light Drivers Ed & DUI School LLC and the services we provide.
+
+Greetings from Green Light Drivers Ed & DUI School LLC, a Bilingual Driving School at www.greenlightdrivers.com.
+
+We write to introduce our organization and the services we provide as a Georgia DDS-Certified Driving and DUI/Risk reduction School serving teens and adults throughout the State and other States in the United States.
+
+This letter does not serve as a Direct Solicitation or engage in any activity that could be interpreted as Direct Soliciting. Our goal is to network with Great professionals like your firm and introduce our professional services to your firm as a Licensed, Successful Driving School with over 200 5-star Google Ratings, offering Driving Education, Defensive Driving/Driver Improvement, DUI/Risk Reduction programs, and Georgia-approved third-party road tests. We are also providing Clinical evaluations/ASAM thought by Certified Instructors at our Location as professional Resources available to you, as needed or required by your clients in Georgia.
+
+Services We Provide
+
+• DDS-Approved Defensive Driving Courses (In-Class & Virtual through Zoom)
+• DUI / Risk Reduction Programs (In-Class & Virtual through Zoom)
+• Joshua’s Law Driver Education Courses
+• Behind-The-Wheel Driving Lessons (Cars equipped with Cameras and Instructor driving pedals)
+• Road Test Preparation
+• DDS-Approved On-Site Road Testing
+• English and Spanish Programs
+• Flexible Scheduling Including Weekends
+
+How Our Services May Help Your Clients
+
+Many drivers require educational or compliance-related services connected to:
+
+• License point reduction
+• Court requirements
+• Fine reduction eligibility
+• License reinstatement processes
+• Driving evaluations
+• Safe-driving education
+
+Our school focuses on safe driving compliance, driver education, road safety, and professional support for students’ safe driving.
+
+Certified instructors conduct all courses, and we offer both virtual and in-person options to help students meet the Department of Driver Services (DDS) and the Court requirements efficiently and professionally.
+
+Contact Information
+
+Green Light Drivers Ed & DUI School LLC
+6110 McFarland Station Drive, Suite 703
+Alpharetta, GA 30004
+
+Phone: (770) 685-1600
+Email: info@greenlightdrivers.com
+Website: https://greenlightdrivers.com
+
+Thank you for your time and consideration. We appreciate the opportunity to introduce our school and would be happy to provide additional information or informational materials for your office at any time.
+
+Sincerely,
+
+{{signature_image}}
+
+Manager
+Green Light Drivers Ed & DUI School LLC"""
+
+
+def render_template_text(template_text, variables):
+    rendered = template_text or ""
+
+    for key, value in variables.items():
+        rendered = rendered.replace("{" + key + "}", value or "")
+
+    return rendered
+
+
+def plain_text_to_html(text):
+    paragraphs = []
+
+    for block in (text or "").strip().split("\n\n"):
+        lines = [line.rstrip() for line in block.splitlines()]
+
+        if not any(line.strip() for line in lines):
+            continue
+
+        escaped_lines = [
+            SIGNATURE_IMAGE_HTML if line.strip() == SIGNATURE_IMAGE_PLACEHOLDER else escape(line)
+            for line in lines
+        ]
+        paragraphs.append(f"<p>{'<br>'.join(escaped_lines)}</p>")
+
+    return "\n\n".join(paragraphs)
+
+
+def wrap_email_html(body_html):
+    return f"""
 <html>
 <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #222;">
 
-<p>Dear {firm_name} Team,</p>
-
-<p>
-We are reaching out to professional firms in the {city} area to introduce Green Light Drivers Ed & DUI School LLC and the services we provide.
-</p>
-
-<p>
-Greetings from Green Light Drivers Ed & DUI School LLC, a Bilingual Driving School at 
-www.greenlightdrivers.com.
-</p>
-
-<p>
-We write to introduce our organization and the services we provide as a Georgia DDS-Certified Driving and DUI/Risk reduction School serving teens and adults throughout the State and other States in the United States.
-</p>
-
-<p>
-This letter does not serve as a Direct Solicitation or engage in any activity that could be interpreted as Direct Soliciting. Our goal is to network with Great professionals like your firm and introduce our professional services to your firm as a Licensed, Successful Driving School with over 200 5-star Google Ratings, offering Driving Education, Defensive Driving/Driver Improvement, DUI/Risk Reduction programs, and Georgia-approved third-party road tests. We are also providing Clinical evaluations/ASAM taught by Certified Instructors at our Location as professional Resources available to you, as needed or required by your clients in Georgia.
-</p>
-
-<p><strong>Services We Provide</strong></p>
-
-<ul>
-<li>DDS-Approved Defensive Driving Courses (In-Class & Virtual through Zoom)</li>
-<li>DUI / Risk Reduction Programs (In-Class & Virtual through Zoom)</li>
-<li>Joshua’s Law Driver Education Courses</li>
-<li>Behind-The-Wheel Driving Lessons (Cars equipped with Cameras and Instructor driving pedals)</li>
-<li>Road Test Preparation</li>
-<li>DDS-Approved On-Site Road Testing</li>
-<li>English and Spanish Programs</li>
-<li>Flexible Scheduling Including Weekends</li>
-</ul>
-
-<p><strong>How Our Services May Help Your Clients</strong></p>
-
-<p>
-Many drivers require educational or compliance-related services connected to:
-</p>
-
-<ul>
-<li>License point reduction</li>
-<li>Court requirements</li>
-<li>Fine reduction eligibility</li>
-<li>License reinstatement processes</li>
-<li>Driving evaluations</li>
-<li>Safe-driving education</li>
-</ul>
-
-<p>
-Our school focuses on safe driving compliance, driver education, road safety, and professional support for students’ safe driving.
-</p>
-
-<p>
-Certified instructors conduct all courses, and we offer both virtual and in-person options to help students meet the Department of Driver Services (DDS) and the Court requirements efficiently and professionally.
-</p>
-
-<p><strong>Contact Information</strong></p>
-
-<p>
-Green Light Drivers Ed & DUI School LLC<br>
-6110 McFarland Station Drive, Suite 703<br>
-Alpharetta, GA 30004
-</p>
-
-<p>
-Phone: (770) 685-1600<br>
-Email: info@greenlightdrivers.com<br>
-Website: https://greenlightdrivers.com
-</p>
-
-<p>
-Thank you for your time and consideration. We appreciate the opportunity to introduce our school and would be happy to provide additional information or informational materials for your office at any time.
-</p>
-
-<p>Sincerely,</p>
-
-
-
-<p style="margin-top:5px;">
-Manager<br>
-<strong>Green Light Drivers Ed & DUI School LLC</strong>
-</p>
+{body_html}
 
 </body>
 </html>
-"""
+""".strip()
+
+
+def is_official_template(body_text):
+    required_parts = [
+        "Dear {firm_name},",
+        "Greetings from Green Light Drivers Ed & DUI School LLC",
+        "Services We Provide",
+        "How Our Services May Help Your Clients",
+        "Contact Information",
+        SIGNATURE_IMAGE_PLACEHOLDER,
+        "Manager\nGreen Light Drivers Ed & DUI School LLC",
+    ]
+
+    return all(part in (body_text or "") for part in required_parts)
+
+
+def get_active_template():
+    db = SessionLocal()
+
+    try:
+        template = db.query(models.EmailTemplate).filter(models.EmailTemplate.is_active.is_(True)).first()
+
+        if not template:
+            template = models.EmailTemplate(
+                name="Main outreach letter",
+                subject=DEFAULT_SUBJECT,
+                body_html=DEFAULT_BODY_TEXT,
+                is_active=True
+            )
+            db.add(template)
+            db.commit()
+            db.refresh(template)
+        elif not is_official_template(template.body_text):
+            template.subject = DEFAULT_SUBJECT
+            template.body_html = DEFAULT_BODY_TEXT
+            db.commit()
+            db.refresh(template)
+
+        return {
+            "subject": template.subject,
+            "body_text": template.body_text,
+        }
+    finally:
+        db.close()
+
+
+def generate_outreach_email(firm_name, city, practice_area):
+    variables = {
+        "firm_name": firm_name or "Your Firm",
+        "city": city or "your area",
+        "practice_area": practice_area or "your practice area",
+    }
+
+    template = get_active_template()
+    subject = template["subject"] if template else DEFAULT_SUBJECT
+    body_text = template["body_text"] if template else DEFAULT_BODY_TEXT
+    body_text = body_text.replace("Dear {firm_name} Team,", "Dear {firm_name},")
+    rendered_body_text = render_template_text(body_text, variables)
 
     return {
-        "subject": subject,
-        "body": body.strip()
+        "subject": render_template_text(subject, variables),
+        "body": wrap_email_html(plain_text_to_html(rendered_body_text))
     }

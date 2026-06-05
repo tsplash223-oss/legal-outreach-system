@@ -34,9 +34,29 @@
           <span class="nav-icon">D</span>
           Prospect Database
         </a>
+        <a class="nav-link" href="#manual-add" data-section="manual-add">
+          <span class="nav-icon">A</span>
+          Add Prospect
+        </a>
+        <a class="nav-link" href="#import-excel" data-section="import-excel">
+          <span class="nav-icon">I</span>
+          Import Excel
+        </a>
         <a class="nav-link" href="#outreach" data-section="outreach">
           <span class="nav-icon">O</span>
           Outreach
+        </a>
+        <a class="nav-link" href="#follow-ups" data-section="follow-ups">
+          <span class="nav-icon">F</span>
+          Follow-Up Center
+        </a>
+        <a class="nav-link" href="#newsletters" data-section="newsletters">
+          <span class="nav-icon">N</span>
+          Newsletter Center
+        </a>
+        <a class="nav-link" href="#email-template" data-section="email-template">
+          <span class="nav-icon">T</span>
+          Email Template
         </a>
         <a class="nav-link" href="#logs" data-section="logs">
           <span class="nav-icon">L</span>
@@ -125,6 +145,135 @@
         </article>
       </section>
 
+      <section class="panel analytics-panel" aria-label="CRM analytics dashboard">
+        <div class="section-heading analytics-heading">
+          <div>
+            <span class="eyebrow">CRM analytics</span>
+            <h2>Pipeline Dashboard</h2>
+          </div>
+          <span class="panel-badge">Owner-managed funnel</span>
+        </div>
+
+        <div class="analytics-helper-row">
+          <p class="analytics-helper-text">Enter owner-reviewed CRM totals here when you only need the count, not the individual firm record.</p>
+          <div class="crm-status-message" id="crmStatusMessage" role="status" aria-live="polite"></div>
+        </div>
+
+        <form class="analytics-manual-form" id="manualCrmCountsForm">
+          <label class="analytics-count-field">
+            <span>Interested</span>
+            <input id="manualInterestedCount" type="number" min="0" step="1" value="0" />
+          </label>
+          <label class="analytics-count-field">
+            <span>Meeting Scheduled</span>
+            <input id="manualMeetingsCount" type="number" min="0" step="1" value="0" />
+          </label>
+          <label class="analytics-count-field">
+            <span>Partners</span>
+            <input id="manualPartnersCount" type="number" min="0" step="1" value="0" />
+          </label>
+          <label class="analytics-count-field">
+            <span>Not Interested</span>
+            <input id="manualNotInterestedCount" type="number" min="0" step="1" value="0" />
+          </label>
+          <button class="button button-primary analytics-save-button" id="saveManualCrmCountsButton" type="submit">
+            <span class="button-icon">S</span>
+            Save CRM Counts
+          </button>
+        </form>
+
+        <div class="analytics-card-grid">
+          <article class="analytics-card">
+            <span>Total Prospects</span>
+            <strong id="analyticsTotalProspects">0</strong>
+          </article>
+          <article class="analytics-card">
+            <span>Emails Sent</span>
+            <strong id="analyticsEmailsSent">0</strong>
+          </article>
+          <article class="analytics-card">
+            <span>Replies</span>
+            <strong id="analyticsReplies">0</strong>
+          </article>
+          <article class="analytics-card">
+            <span>Interested</span>
+            <strong id="analyticsInterested">0</strong>
+          </article>
+          <article class="analytics-card">
+            <span>Meetings Scheduled</span>
+            <strong id="analyticsMeetingsScheduled">0</strong>
+          </article>
+          <article class="analytics-card">
+            <span>Partners</span>
+            <strong id="analyticsPartners">0</strong>
+          </article>
+          <article class="analytics-card">
+            <span>Not Interested</span>
+            <strong id="analyticsNotInterested">0</strong>
+          </article>
+        </div>
+
+        <div class="analytics-rate-grid">
+          <article class="analytics-rate-card">
+            <span>Reply Rate</span>
+            <strong id="analyticsReplyRate">0.0%</strong>
+            <small>Replies / Emails Sent</small>
+          </article>
+          <article class="analytics-rate-card">
+            <span>Interested Rate</span>
+            <strong id="analyticsInterestedRate">0.0%</strong>
+            <small>Interested / Replies</small>
+          </article>
+          <article class="analytics-rate-card">
+            <span>Partner Conversion Rate</span>
+            <strong id="analyticsPartnerConversionRate">0.0%</strong>
+            <small>Partners / Emails Sent</small>
+          </article>
+        </div>
+      </section>
+
+      <section class="panel reply-tracking-panel" aria-label="Reply Center">
+        <div class="section-heading reply-center-heading">
+          <div>
+            <span class="eyebrow">Reply tracking</span>
+            <h2>Reply Center</h2>
+          </div>
+          <button class="button button-secondary" id="checkRepliesButton" type="button">
+            <span class="button-icon">R</span>
+            Check Replies
+          </button>
+        </div>
+
+        <p class="reply-center-intro">Reply tracking uses the business Gmail API to detect when prospects respond and marks matched prospects as Replied.</p>
+
+        <div class="reply-status" id="replyTrackingMessage" role="status" aria-live="polite">
+          Ready to check recent Gmail inbox replies.
+        </div>
+
+        <div class="reply-summary-grid" aria-label="Reply tracking summary">
+          <div class="reply-summary-card">
+            <span>Messages Checked</span>
+            <strong id="replyMessagesChecked">0</strong>
+          </div>
+          <div class="reply-summary-card">
+            <span>Replies Found</span>
+            <strong id="replyRepliesFound">0</strong>
+          </div>
+          <div class="reply-summary-card">
+            <span>Updated Firms</span>
+            <strong id="replyUpdatedFirms">0</strong>
+          </div>
+          <div class="reply-summary-card">
+            <span>Reply Rate</span>
+            <strong id="replyReplyRate">0.0%</strong>
+          </div>
+        </div>
+
+        <div class="reply-results" id="replyResults" aria-live="polite">
+          <div class="reply-empty-state">No matching replies found yet.</div>
+        </div>
+      </section>
+
       <section class="panel campaign-panel" id="campaign">
         <div class="section-heading">
           <div>
@@ -185,6 +334,335 @@
               <strong>Campaign report</strong>
               <span>Run a campaign to see searched, saved, eligible, sent, failed, and skipped prospects.</span>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel follow-up-panel" id="follow-ups">
+        <div class="section-heading follow-up-heading">
+          <div>
+            <span class="eyebrow">Follow-up management</span>
+            <h2>Follow-Up Center</h2>
+          </div>
+          <button class="button button-secondary" id="refreshFollowUpsButton" type="button">
+            <span class="button-icon">R</span>
+            Refresh Follow-Ups
+          </button>
+        </div>
+
+        <p class="follow-up-intro">Review prospects who have not replied yet, send follow-ups manually, or enable controlled automatic follow-ups.</p>
+
+        <div class="follow-up-center-grid">
+          <div class="follow-up-workspace">
+            <div class="follow-up-part-heading">
+              <div>
+                <span class="eyebrow">Review Follow-Ups</span>
+                <h3>Owner Review</h3>
+              </div>
+              <span class="panel-badge">Owner chooses who to follow up with</span>
+            </div>
+
+            <div class="follow-up-summary-grid" aria-label="Follow-up summary">
+              <div class="follow-up-summary-card">
+                <span>Eligible Follow-Ups</span>
+                <strong id="eligibleFollowUps">0</strong>
+              </div>
+              <div class="follow-up-summary-card">
+                <span>Follow-Ups Sent</span>
+                <strong id="followUpsSent">0</strong>
+              </div>
+              <div class="follow-up-summary-card">
+                <span>Reply Rate</span>
+                <strong id="followUpReplyRate">0.0%</strong>
+              </div>
+            </div>
+
+            <div class="inline-feedback" id="followUpMessage" role="status" aria-live="polite"></div>
+
+            <div class="follow-up-results" id="followUpResults" aria-live="polite">
+              <div class="follow-up-empty-state">No prospects are ready for follow-up yet.</div>
+            </div>
+          </div>
+
+          <div class="follow-up-workspace automation-workspace">
+            <div class="follow-up-part-heading">
+              <div>
+                <span class="eyebrow">Automation Settings</span>
+                <h3>Auto Mode</h3>
+              </div>
+              <span class="panel-badge" id="autoFollowUpStatusBadge">Disabled</span>
+            </div>
+
+            <p class="auto-follow-up-intro">Auto Mode sends eligible follow-ups using safety limits after the owner enables it.</p>
+
+            <div class="auto-follow-up-summary-grid" aria-label="Automatic follow-up summary">
+              <div class="auto-follow-up-summary-card">
+                <span>Auto Follow-Up Status</span>
+                <strong id="autoFollowUpStatus">Disabled</strong>
+              </div>
+              <div class="auto-follow-up-summary-card">
+                <span>Daily Limit</span>
+                <strong id="autoFollowUpDailyLimit">5</strong>
+              </div>
+              <div class="auto-follow-up-summary-card">
+                <span>Delay Between Sends</span>
+                <strong id="autoFollowUpDelay">10s</strong>
+              </div>
+              <div class="auto-follow-up-summary-card">
+                <span>Eligible Follow-Ups</span>
+                <strong id="autoEligibleFollowUps">0</strong>
+              </div>
+            </div>
+
+            <form class="auto-follow-up-form" id="autoFollowUpSettingsForm">
+              <label class="toggle-field auto-follow-up-toggle">
+                <input id="autoFollowUpEnabled" type="checkbox" />
+                <span class="toggle-track" aria-hidden="true"></span>
+                <span>
+                  <strong>Enable Automatic Follow-Ups</strong>
+                  <small>Allows Auto Mode to send eligible follow-ups within the safety limits.</small>
+                </span>
+              </label>
+
+              <label class="field compact-field">
+                <span>Daily Limit</span>
+                <input id="autoFollowUpLimit" type="number" value="5" min="1" max="50" />
+              </label>
+
+              <label class="field compact-field">
+                <span>Delay Seconds</span>
+                <input id="autoFollowUpDelaySeconds" type="number" value="10" min="0" max="300" />
+              </label>
+
+              <div class="auto-follow-up-actions">
+                <button class="button button-secondary" id="saveAutoFollowUpSettingsButton" type="submit">
+                  <span class="button-icon">S</span>
+                  Save Settings
+                </button>
+                <button class="button button-primary" id="runAutoFollowUpsButton" type="button">
+                  <span class="button-icon">R</span>
+                  Run Auto Follow-Ups Now
+                </button>
+              </div>
+            </form>
+
+            <div class="auto-follow-up-result" id="autoFollowUpResult" role="status" aria-live="polite">
+              Last Run Result: No automatic follow-up run yet.
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel newsletter-panel section-hidden" id="newsletters">
+        <div class="section-heading newsletter-heading">
+          <div>
+            <span class="eyebrow">Owner newsletter tools</span>
+            <h2>Newsletter Center</h2>
+          </div>
+          <button class="button button-secondary" id="refreshNewslettersButton" type="button">
+            <span class="button-icon">R</span>
+            Refresh Contacts
+          </button>
+        </div>
+
+        <p class="newsletter-intro">Use Newsletter Center to send updates, announcements, and promotions to selected contacts.</p>
+
+        <div class="newsletter-dashboard-grid" aria-label="Newsletter dashboard">
+          <article class="newsletter-dashboard-card">
+            <span>Total Newsletter Contacts</span>
+            <strong id="newsletterTotalContacts">0</strong>
+          </article>
+          <article class="newsletter-dashboard-card">
+            <span>Newsletters Sent</span>
+            <strong id="newsletterSentCount">0</strong>
+          </article>
+          <article class="newsletter-dashboard-card">
+            <span>Last Newsletter Sent</span>
+            <strong id="newsletterLastSent">Not recorded</strong>
+          </article>
+          <article class="newsletter-dashboard-card">
+            <span>Unsubscribed / Do Not Contact</span>
+            <strong id="newsletterBlockedCount">0</strong>
+          </article>
+        </div>
+
+        <div class="newsletter-workspace-grid">
+          <form class="newsletter-form" id="newsletterForm">
+            <div class="newsletter-part-heading">
+              <div>
+                <span class="eyebrow">Create Newsletter</span>
+                <h3>Message Builder</h3>
+              </div>
+              <span class="panel-badge">Promotions + Updates</span>
+            </div>
+
+            <label class="field">
+              <span>Newsletter Title</span>
+              <input id="newsletterTitle" type="text" placeholder="Example: Summer Class Updates" required />
+            </label>
+
+            <label class="field">
+              <span>Subject Line</span>
+              <input id="newsletterSubject" type="text" placeholder="Example: New DUI/Risk Reduction class dates available" required />
+            </label>
+
+            <label class="field newsletter-body-field">
+              <span>Message Body</span>
+              <textarea id="newsletterBody" rows="12" placeholder="Write the newsletter message here. Line breaks will be formatted into a professional email." required></textarea>
+            </label>
+
+            <label class="field">
+              <span>Call-to-Action optional</span>
+              <input id="newsletterCta" type="text" placeholder="Example: Call (770) 685-1600 to reserve a class seat." />
+            </label>
+
+            <div class="newsletter-safety-grid">
+              <label class="field compact-field">
+                <span>Send limit</span>
+                <input id="newsletterSendLimit" type="number" value="25" min="1" max="250" />
+              </label>
+
+              <label class="field compact-field">
+                <span>Delay between sends</span>
+                <input id="newsletterDelaySeconds" type="number" value="10" min="0" max="300" />
+              </label>
+            </div>
+
+            <label class="checkbox-field newsletter-confirmation">
+              <input id="newsletterConfirmSend" type="checkbox" />
+              <span>I confirm this newsletter is ready to send.</span>
+            </label>
+
+            <div class="newsletter-actions">
+              <button class="button button-dark" id="newsletterPreviewButton" type="button">
+                <span class="button-icon">P</span>
+                Preview Newsletter
+              </button>
+              <button class="button button-secondary" id="newsletterDraftButton" type="button">
+                <span class="button-icon">S</span>
+                Save Draft
+              </button>
+              <button class="button button-primary" id="newsletterSendButton" type="button">
+                <span class="button-icon">N</span>
+                Send Newsletter
+              </button>
+            </div>
+
+            <div class="inline-feedback" id="newsletterMessage" role="status" aria-live="polite"></div>
+          </form>
+
+          <div class="newsletter-audience-panel">
+            <div class="newsletter-part-heading">
+              <div>
+                <span class="eyebrow">Audience Selection</span>
+                <h3>Choose Recipients</h3>
+              </div>
+              <span class="panel-badge" id="newsletterSelectedCount">0 selected</span>
+            </div>
+
+            <div class="newsletter-audience-options">
+              <label class="radio-field">
+                <input name="newsletterAudience" type="radio" value="all" checked />
+                <span>All contacts with email</span>
+              </label>
+              <label class="radio-field">
+                <input name="newsletterAudience" type="radio" value="imported" />
+                <span>Imported contacts only</span>
+              </label>
+              <label class="radio-field">
+                <input name="newsletterAudience" type="radio" value="status" />
+                <span>Prospects by status</span>
+              </label>
+              <label class="radio-field">
+                <input name="newsletterAudience" type="radio" value="selected" />
+                <span>Manual selected contacts from table</span>
+              </label>
+            </div>
+
+            <div class="newsletter-status-filters" aria-label="Prospect status filters">
+              <label class="checkbox-field">
+                <input class="newsletter-status-checkbox" type="checkbox" value="Partner" />
+                <span>Partner</span>
+              </label>
+              <label class="checkbox-field">
+                <input class="newsletter-status-checkbox" type="checkbox" value="Interested" />
+                <span>Interested</span>
+              </label>
+              <label class="checkbox-field">
+                <input class="newsletter-status-checkbox" type="checkbox" value="Replied" />
+                <span>Replied</span>
+              </label>
+              <label class="checkbox-field">
+                <input class="newsletter-status-checkbox" type="checkbox" value="Not Contacted" />
+                <span>Not Contacted</span>
+              </label>
+              <label class="checkbox-field">
+                <input class="newsletter-status-checkbox" type="checkbox" value="Email Sent" />
+                <span>Email Sent</span>
+              </label>
+            </div>
+
+            <div class="newsletter-preview" id="newsletterPreview" hidden>
+              <div class="template-preview-header">
+                <div>
+                  <span>Preview subject</span>
+                  <strong id="newsletterPreviewSubject">No preview yet</strong>
+                </div>
+              </div>
+              <div class="email-preview-shell newsletter-preview-shell">
+                <iframe id="newsletterPreviewFrame" title="Newsletter preview"></iframe>
+              </div>
+            </div>
+
+            <div class="newsletter-report" id="newsletterReport" aria-live="polite">
+              <div class="report-empty">
+                <strong>Newsletter report</strong>
+                <span>Preview or send a newsletter to see recipient and safety details.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="newsletter-contact-panel">
+          <div class="section-heading table-heading newsletter-contact-heading">
+            <div>
+              <span class="eyebrow">Contact Table</span>
+              <h2>Newsletter Contacts</h2>
+            </div>
+            <div class="newsletter-table-actions">
+              <label class="table-search">
+                <span>Filter contacts</span>
+                <input id="newsletterContactFilter" type="search" placeholder="Search name, email, city, status" />
+              </label>
+              <button class="button button-secondary" id="newsletterSelectEligibleButton" type="button">
+                <span class="button-icon">S</span>
+                Select Eligible
+              </button>
+              <button class="button button-ghost" id="newsletterClearSelectionButton" type="button">Clear</button>
+            </div>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Select</th>
+                  <th>Name/Firm</th>
+                  <th>Email</th>
+                  <th>City</th>
+                  <th>Type/Category</th>
+                  <th>Status</th>
+                  <th>Newsletter Eligible</th>
+                </tr>
+              </thead>
+              <tbody id="newsletterContactsTable">
+                <tr>
+                  <td colspan="7">
+                    <div class="table-state">Loading newsletter contacts...</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
@@ -258,6 +736,146 @@
             <span>Ready to send controlled outreach to eligible prospects.</span>
           </div>
         </article>
+      </section>
+
+      <section class="owner-tools-grid">
+        <article class="panel manual-add-panel" id="manual-add">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Owner contact tools</span>
+              <h2>Add Prospect Manually</h2>
+            </div>
+            <span class="panel-badge">Single Contact</span>
+          </div>
+
+          <form class="manual-add-form" id="manualAddForm">
+            <label class="field manual-required">
+              <span>Company / Firm Name</span>
+              <input id="manualFirmName" type="text" placeholder="Example: Smith Law Group" required />
+            </label>
+
+            <label class="field manual-required">
+              <span>Email Address</span>
+              <input id="manualEmail" type="email" placeholder="Example: info@smithlaw.com" required />
+            </label>
+
+            <label class="field">
+              <span>Phone Number optional</span>
+              <input id="manualPhone" type="tel" placeholder="Example: (404) 555-0100" />
+            </label>
+
+            <label class="field">
+              <span>Website optional</span>
+              <input id="manualWebsite" type="url" placeholder="Example: https://smithlaw.com" />
+            </label>
+
+            <label class="field">
+              <span>City optional</span>
+              <input id="manualCity" type="text" placeholder="Example: Atlanta" />
+            </label>
+
+            <label class="field">
+              <span>Prospect Type optional</span>
+              <input id="manualProspectType" type="text" placeholder="Example: DUI Law / Business Contact" />
+            </label>
+
+            <button class="button button-primary manual-add-submit" id="manualAddButton" type="submit">
+              <span class="button-icon">A</span>
+              Add Prospect
+            </button>
+          </form>
+
+          <div class="inline-feedback" id="manualAddMessage" role="status" aria-live="polite"></div>
+        </article>
+
+        <article class="panel import-panel" id="import-excel">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Owner contact tools</span>
+              <h2>Import Excel Contact List</h2>
+            </div>
+            <span class="panel-badge">.xlsx</span>
+          </div>
+
+          <form class="import-form" id="importExcelForm">
+            <div class="import-file-area">
+              <label class="field">
+                <span>Excel file</span>
+                <input id="excelFileInput" type="file" accept=".xlsx" required />
+              </label>
+              <p>Upload an Excel file with company names and email addresses.</p>
+              <strong id="excelSelectedFile">No file selected</strong>
+            </div>
+
+            <button class="button button-primary" id="importExcelButton" type="submit">
+              <span class="button-icon">I</span>
+              Import
+            </button>
+          </form>
+
+          <div class="inline-feedback" id="importExcelMessage" role="status" aria-live="polite"></div>
+          <div class="import-results" id="importExcelResults" aria-live="polite"></div>
+        </article>
+      </section>
+
+      <section class="panel template-panel" id="email-template">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Owner controls</span>
+            <h2>Email Template</h2>
+          </div>
+          <span class="panel-badge">Future Emails Only</span>
+        </div>
+
+        <div class="template-warning">Changes apply to future emails only.</div>
+
+        <form class="template-form" id="templateForm">
+          <input id="templateId" type="hidden" />
+
+          <label class="field">
+            <span>Template Name</span>
+            <input id="templateName" type="text" placeholder="Main outreach letter" required />
+          </label>
+
+          <label class="field">
+            <span>Subject</span>
+            <input id="templateSubject" type="text" placeholder="Professional Introduction - Green Light Drivers Ed & DUI School LLC" required />
+          </label>
+
+          <label class="field template-body-field">
+            <span>Letter Body</span>
+            <textarea id="templateBody" rows="18" placeholder="Write the outreach letter here. You can use {firm_name}, {city}, and {practice_area}." required></textarea>
+          </label>
+
+          <div class="template-actions">
+            <button class="button button-primary" id="templateSaveButton" type="submit">
+              <span class="button-icon">S</span>
+              Save Template
+            </button>
+            <button class="button button-secondary" id="templateActivateButton" type="button">
+              <span class="button-icon">A</span>
+              Activate Template
+            </button>
+            <button class="button button-dark" id="templatePreviewButton" type="button">
+              <span class="button-icon">P</span>
+              Preview Template
+            </button>
+          </div>
+        </form>
+
+        <div class="inline-feedback" id="templateMessage" role="status" aria-live="polite"></div>
+
+        <div class="template-preview" id="templatePreview" hidden>
+          <div class="template-preview-header">
+            <div>
+              <span>Preview subject</span>
+              <strong id="templatePreviewSubject">No preview yet</strong>
+            </div>
+          </div>
+          <div class="email-preview-shell template-preview-shell">
+            <iframe id="templatePreviewFrame" title="Template preview"></iframe>
+          </div>
+        </div>
       </section>
 
       <section class="panel table-panel" id="firms">
@@ -349,6 +967,18 @@
             <strong>Plain HTML,CSS,JS</strong>
           </div>
         </div>
+        <div class="danger-zone">
+          <div class="danger-zone-copy">
+            <span class="eyebrow">Danger Zone</span>
+            <h3>Reset Campaign Data</h3>
+            <p>“This will remove firms, outreach logs, replies, follow-up history, and campaign history. Templates and settings will be preserved. A backup will be created before deletion.”</p>
+          </div>
+          <button class="button button-danger" id="resetCampaignButton" type="button">
+            <span class="button-icon">R</span>
+            Reset Campaign Data
+          </button>
+        </div>
+        <div class="reset-campaign-result" id="resetCampaignResult" role="status" aria-live="polite"></div>
       </section>
     </main>
   </div>
@@ -386,6 +1016,46 @@
           <span class="button-icon">O</span>
           Send Outreach
         </button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="replyDetailsModal" aria-hidden="true">
+    <div class="modal-card reply-modal-card" role="dialog" aria-modal="true" aria-labelledby="replyDetailsTitle">
+      <div class="modal-header">
+        <div>
+          <span class="eyebrow">Reply details</span>
+          <h2 id="replyDetailsTitle">Prospect Reply</h2>
+        </div>
+        <button class="modal-close" id="replyDetailsCloseButton" type="button" aria-label="Close reply details">Ã—</button>
+      </div>
+
+      <div class="reply-detail-grid">
+        <div>
+          <span>Firm</span>
+          <strong id="replyDetailFirm">N/A</strong>
+        </div>
+        <div>
+          <span>From</span>
+          <strong id="replyDetailFrom">N/A</strong>
+        </div>
+        <div>
+          <span>Subject</span>
+          <strong id="replyDetailSubject">N/A</strong>
+        </div>
+        <div>
+          <span>Reply Date</span>
+          <strong id="replyDetailDate">N/A</strong>
+        </div>
+      </div>
+
+      <div class="reply-detail-snippet">
+        <span>Snippet</span>
+        <p id="replyDetailSnippet">No snippet available.</p>
+      </div>
+
+      <div class="modal-actions">
+        <button class="button button-secondary" id="replyDetailsDoneButton" type="button">Close</button>
       </div>
     </div>
   </div>
