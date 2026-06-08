@@ -15,7 +15,7 @@ import schemas
 from database import DATABASE_PATH, SessionLocal
 from services.lead_finder import GoogleMapsConfigurationError, GoogleMapsSearchError, search_law_firms
 from services.email_generator import DEFAULT_BODY_TEXT, DEFAULT_SUBJECT, generate_outreach_email, is_official_template
-from services.email_sender import send_email
+from services.email_sender import check_smtp_config, safe_email_error_message, send_email
 from services.gmail_reply_tracker import check_gmail_replies
 
 router = APIRouter(tags=["firms"])
@@ -294,6 +294,10 @@ def update_initial_contact_tracking(firm, contacted_at):
     firm.follow_up_count = firm.follow_up_count or 0
 
 
+def email_failure_reason(error: Exception):
+    return safe_email_error_message(error)
+
+
 def send_follow_up_for_firm(firm, db: Session):
     follow_up_type = next_follow_up_type(firm.follow_up_count or 0)
     body = follow_up_email_body(firm.firm_name)
@@ -334,13 +338,14 @@ def send_follow_up_for_firm(firm, db: Session):
         }
 
     except Exception as e:
+        failure_reason = email_failure_reason(e)
         log = models.EmailLog(
             firm_id=firm.id,
             firm_name=firm.firm_name,
             email=firm.email,
             subject=f"{FOLLOW_UP_SUBJECT} ({follow_up_type})",
             status="Failed",
-            error_message=str(e),
+            error_message=failure_reason,
             sent_at=utc_now()
         )
 
@@ -353,7 +358,7 @@ def send_follow_up_for_firm(firm, db: Session):
             "firm_name": firm.firm_name,
             "email": firm.email,
             "follow_up_type": follow_up_type,
-            "error": str(e),
+            "error": failure_reason,
         }
 
 
@@ -728,11 +733,17 @@ def get_email_logs(db: Session = Depends(get_db)):
             "email": log.email,
             "subject": log.subject,
             "status": log.status,
+            "failure_reason": log.error_message,
             "error_message": log.error_message,
             "sent_at": utc_datetime_iso(log.sent_at),
         }
         for log in logs
     ]
+
+
+@router.get("/firms/email-config-check/")
+def get_email_config_check():
+    return check_smtp_config()
 
 
 @router.get("/firms/check-replies/")
@@ -1035,20 +1046,21 @@ def run_campaign(
                 details.append(item)
 
             except Exception as e:
+                failure_reason = email_failure_reason(e)
                 log = models.EmailLog(
                     firm_id=firm.id,
                     firm_name=firm.firm_name,
                     email=firm.email,
                     subject=subject,
                     status="Failed",
-                    error_message=str(e),
+                    error_message=failure_reason,
                     sent_at=utc_now()
                 )
 
                 db.add(log)
                 db.commit()
 
-                item = campaign_firm_item(firm, "Email send failed", error=str(e), outcome="failed")
+                item = campaign_firm_item(firm, "Email send failed", error=failure_reason, outcome="failed")
                 failed.append(item)
                 details.append(item)
 
@@ -1104,11 +1116,31 @@ def send_test_email_for_firm(firm_id: int, test_email: str, db: Session = Depend
         practice_area=firm.practice_area
     )
 
-    send_email(
-        to_email=test_email,
-        subject=generated["subject"],
-        body=generated["body"]
-    )
+    try:
+        send_email(
+            to_email=test_email,
+            subject=generated["subject"],
+            body=generated["body"]
+        )
+    except Exception as e:
+        failure_reason = email_failure_reason(e)
+        log = models.EmailLog(
+            firm_id=firm.id,
+            firm_name=firm.firm_name,
+            email=test_email,
+            subject=generated["subject"],
+            status="Failed",
+            error_message=failure_reason,
+            sent_at=utc_now()
+        )
+
+        db.add(log)
+        db.commit()
+
+        return {
+            "success": False,
+            "error": failure_reason
+        }
 
     return {
         "success": True,
@@ -1165,13 +1197,14 @@ def send_outreach_email(firm_id: int, db: Session = Depends(get_db)):
         }
 
     except Exception as e:
+        failure_reason = email_failure_reason(e)
         log = models.EmailLog(
             firm_id=firm.id,
             firm_name=firm.firm_name,
             email=firm.email,
             subject=generated["subject"],
             status="Failed",
-            error_message=str(e),
+            error_message=failure_reason,
             sent_at=utc_now()
         )
 
@@ -1180,7 +1213,7 @@ def send_outreach_email(firm_id: int, db: Session = Depends(get_db)):
 
         return {
             "success": False,
-            "error": str(e)
+            "error": failure_reason
         }
 
 
@@ -1252,13 +1285,14 @@ def send_batch_outreach(limit: int = 3, delay_seconds: int = 10, db: Session = D
             time.sleep(delay_seconds)
 
         except Exception as e:
+            failure_reason = email_failure_reason(e)
             log = models.EmailLog(
                 firm_id=firm.id,
                 firm_name=firm.firm_name,
                 email=firm.email,
                 subject=generated["subject"],
                 status="Failed",
-                error_message=str(e),
+                error_message=failure_reason,
                 sent_at=utc_now()
             )
 
@@ -1268,7 +1302,7 @@ def send_batch_outreach(limit: int = 3, delay_seconds: int = 10, db: Session = D
             failed.append({
                 "firm": firm.firm_name,
                 "email": firm.email,
-                "error": str(e)
+                "error": failure_reason
             })
 
     return {

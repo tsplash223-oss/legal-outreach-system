@@ -573,12 +573,16 @@ function renderLogs(logs) {
 
   orderedLogs.forEach((log) => {
     const statusClass = log.status === "Sent" ? "sent" : "failed";
+    const failureReason = log.failure_reason || log.error_message || "";
 
     table.innerHTML += `
       <tr>
         <td>${escapeHtml(log.firm_name || "Unknown")}</td>
         <td>${escapeHtml(log.email || "N/A")}</td>
-        <td><span class="status ${statusClass}">${escapeHtml(log.status || "N/A")}</span></td>
+        <td>
+          <span class="status ${statusClass}">${escapeHtml(log.status || "N/A")}</span>
+          ${failureReason ? `<div class="muted-cell">Failure Reason: ${escapeHtml(failureReason)}</div>` : ""}
+        </td>
         <td>${escapeHtml(log.subject || "N/A")}</td>
         <td>${escapeHtml(formatLocalTimestamp(log.sent_at))}</td>
       </tr>
