@@ -1,4 +1,5 @@
 import logging
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -49,21 +50,25 @@ for gmail_file_error in gmail_file_errors:
 app = FastAPI(title="Prospective Client Outreach System API")
 
 default_origins = [
-    "https://legal-outreach-system.vercel.app",
-    "https://legal-outreach-system.onrender.com",
     "http://127.0.0.1:5500",
     "http://localhost:5500",
-    "file://",
-    "null",
+    "https://legal-outreach-system-2n7swsrtx-tsplash223-oss-projects.vercel.app",
+    "https://legal-outreach-system.vercel.app",
 ]
+
+frontend_origins = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_ORIGINS", "").split(",")
+    if origin.strip()
+]
+allowed_origins = sorted(set(default_origins + frontend_origins + settings.cors_origins))
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_origins or default_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 app.include_router(auth.router)
