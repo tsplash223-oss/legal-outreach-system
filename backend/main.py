@@ -47,13 +47,10 @@ gmail_file_errors = ensure_gmail_api_files_from_env()
 for gmail_file_error in gmail_file_errors:
     logger.warning("Gmail reply tracking configuration: %s", gmail_file_error)
 
-app = FastAPI(title="Prospective Client Outreach System API")
-
 default_origins = [
     "http://127.0.0.1:5500",
     "http://localhost:5500",
-    "https://legal-outreach-system-2n7swsrtx-tsplash223-oss-projects.vercel.app",
-    "https://legal-outreach-system.vercel.app",
+    "https://legal-outreach-system-tsplash223-oss-projects.vercel.app",
 ]
 
 frontend_origins = [
@@ -63,13 +60,14 @@ frontend_origins = [
 ]
 allowed_origins = sorted(set(default_origins + frontend_origins + settings.cors_origins))
 
+app = FastAPI(title="Prospective Client Outreach System API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(auth.router)
