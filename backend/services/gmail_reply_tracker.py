@@ -1,3 +1,5 @@
+import json
+import os
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime, parseaddr
 from pathlib import Path
@@ -9,6 +11,8 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 CREDENTIALS_PATH = BACKEND_DIR / "credentials.json"
 TOKEN_PATH = BACKEND_DIR / "token.json"
+GMAIL_CREDENTIALS_ENV = "GMAIL_CREDENTIALS_JSON"
+GMAIL_TOKEN_ENV = "GMAIL_TOKEN_JSON"
 MAX_MESSAGES = 500
 CAMPAIGN_SEARCH_QUERIES = [
     'subject:"Professional Introduction - Green Light Drivers Ed & DUI School LLC"',
@@ -17,6 +21,66 @@ CAMPAIGN_SEARCH_QUERIES = [
 ]
 GMAIL_SEARCH_QUERY = " OR ".join(CAMPAIGN_SEARCH_QUERIES)
 METADATA_HEADERS = ["From", "To", "Subject", "Date"]
+
+
+def restore_json_file_from_env(path: Path, env_name: str):
+    if path.exists():
+        return None
+
+    env_value = os.getenv(env_name, "").strip()
+    if not env_value:
+        return f"{path.name} is missing and {env_name} is not set."
+
+    try:
+        parsed_json = json.loads(env_value)
+    except json.JSONDecodeError as exc:
+        return f"{env_name} is not valid JSON: {exc}"
+
+    try:
+        path.write_text(json.dumps(parsed_json, indent=2), encoding="utf-8")
+    except OSError as exc:
+        return f"Unable to write {path.name} from {env_name}: {exc}"
+
+    return None
+
+
+def ensure_gmail_api_files_from_env():
+    errors = [
+        error
+        for error in (
+            restore_json_file_from_env(CREDENTIALS_PATH, GMAIL_CREDENTIALS_ENV),
+            restore_json_file_from_env(TOKEN_PATH, GMAIL_TOKEN_ENV),
+        )
+        if error
+    ]
+
+    return errors
+
+
+def gmail_configuration_error():
+    errors = ensure_gmail_api_files_from_env()
+
+    if errors:
+        return base_error(
+            (
+                "Gmail API reply tracking is not configured. "
+                "Set GMAIL_CREDENTIALS_JSON and GMAIL_TOKEN_JSON in the backend environment, "
+                "or provide backend/credentials.json and backend/token.json for local development. "
+                + " ".join(errors)
+            )
+        )
+
+    if not CREDENTIALS_PATH.exists():
+        return base_error(
+            "Gmail API credentials.json is missing. Set GMAIL_CREDENTIALS_JSON or add backend/credentials.json."
+        )
+
+    if not TOKEN_PATH.exists():
+        return base_error(
+            "Gmail API token.json is missing. Set GMAIL_TOKEN_JSON or add backend/token.json."
+        )
+
+    return None
 
 
 def normalize_email(value):
@@ -99,8 +163,9 @@ def import_gmail_dependencies():
 
 
 def get_gmail_service():
-    if not CREDENTIALS_PATH.exists():
-        return None, base_error("Gmail API credentials.json is missing from backend/.")
+    configuration_error = gmail_configuration_error()
+    if configuration_error:
+        return None, configuration_error
 
     deps, error = import_gmail_dependencies()
     if error:

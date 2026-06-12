@@ -10,6 +10,7 @@ from database import engine, Base
 import models
 from routers import auth, firms, newsletters
 from security import hash_password, normalize_email
+from services.gmail_reply_tracker import ensure_gmail_api_files_from_env
 from settings import get_settings
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -41,6 +42,9 @@ def bootstrap_admin_from_env():
 
 
 bootstrap_admin_from_env()
+gmail_file_errors = ensure_gmail_api_files_from_env()
+for gmail_file_error in gmail_file_errors:
+    logger.warning("Gmail reply tracking configuration: %s", gmail_file_error)
 
 app = FastAPI(title="Prospective Client Outreach System API")
 
