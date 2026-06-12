@@ -1,4 +1,4 @@
-const API_BASE = "http://127.0.0.1:8000";
+const API_BASE = "https://legal-outreach-system-production.up.railway.app";
 window.API_BASE = API_BASE;
 console.log("Using LOCAL API_BASE:", API_BASE);
 
