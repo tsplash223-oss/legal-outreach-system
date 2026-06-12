@@ -61,8 +61,6 @@ def check_smtp_config():
         "configured": gmail_address_present and gmail_password_present,
         "gmail_address_present": gmail_address_present,
         "gmail_password_present": gmail_password_present,
-        "gmail_address": gmail_address,
-        "password_length": len(gmail_password),
     }
 
 
@@ -71,8 +69,7 @@ def log_smtp_config_status():
 
     print(f"SMTP configured: {config['configured']}")
     print(f"Gmail address present: {config['gmail_address_present']}")
-    print(f"Password present: {config['gmail_password_present']}")
-    print(f"Password length: {config['password_length']}")
+    print(f"Gmail password present: {config['gmail_password_present']}")
 
 
 def send_email(to_email, subject, body):

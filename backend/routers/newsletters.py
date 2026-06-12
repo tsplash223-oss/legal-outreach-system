@@ -2,14 +2,16 @@ import re
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 import models
+from audit import write_audit_log
 from database import SessionLocal
+from security import get_current_user, require_min_role
 from services.email_sender import send_email
 
-router = APIRouter(prefix="/newsletters", tags=["newsletters"])
+router = APIRouter(prefix="/newsletters", tags=["newsletters"], dependencies=[Depends(get_current_user)])
 
 NEWSLETTER_LOG_PREFIX = "Newsletter:"
 NEWSLETTER_BLOCKED_STATUSES = {"Not Interested", "Do Not Contact"}
@@ -292,7 +294,12 @@ def preview_newsletter(payload: dict = Body(...)):
 
 
 @router.post("/draft/")
-def save_newsletter_draft(payload: dict = Body(...), db: Session = Depends(get_db)):
+def save_newsletter_draft(
+    payload: dict = Body(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     title = (payload.get("title") or "").strip()
     subject = (payload.get("subject") or "").strip()
     body_text = (payload.get("body_text") or "").strip()
@@ -308,6 +315,14 @@ def save_newsletter_draft(payload: dict = Body(...), db: Session = Depends(get_d
     )
 
     db.add(draft)
+    write_audit_log(
+        db,
+        "template.newsletter_draft_created",
+        actor=current_user,
+        request=request,
+        target_type="newsletter_draft",
+        details={"title": title, "subject": subject},
+    )
     db.commit()
     db.refresh(draft)
 
@@ -319,7 +334,12 @@ def save_newsletter_draft(payload: dict = Body(...), db: Session = Depends(get_d
 
 
 @router.post("/send/")
-def send_newsletter(payload: dict = Body(...), db: Session = Depends(get_db)):
+def send_newsletter(
+    payload: dict = Body(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     title = (payload.get("title") or "").strip()
     subject = (payload.get("subject") or "").strip()
     body_text = (payload.get("body_text") or "").strip()
@@ -382,6 +402,15 @@ def send_newsletter(payload: dict = Body(...), db: Session = Depends(get_db)):
                 status="Sent",
                 error_message=None,
             ))
+            write_audit_log(
+                db,
+                "campaign.newsletter_sent",
+                actor=current_user,
+                request=request,
+                target_type="firm",
+                target_id=firm.id,
+                details={"email": firm.email, "subject": subject, "title": title},
+            )
             db.commit()
             sent.append(report_item(firm))
         except Exception as exc:
@@ -393,6 +422,15 @@ def send_newsletter(payload: dict = Body(...), db: Session = Depends(get_db)):
                 status="Failed",
                 error_message=str(exc),
             ))
+            write_audit_log(
+                db,
+                "campaign.newsletter_failed",
+                actor=current_user,
+                request=request,
+                target_type="firm",
+                target_id=firm.id,
+                details={"email": firm.email, "subject": subject, "title": title, "error": str(exc)},
+            )
             db.commit()
             failed.append(report_item(firm, error=str(exc)))
 

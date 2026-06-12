@@ -4,10 +4,30 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Green Light Prospective Client Outreach System</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="./style.css?v=local-api" />
 </head>
 <body>
-  <div class="app-shell">
+  <section class="login-screen" id="loginScreen">
+    <form class="login-card" id="loginForm">
+      <img src="logo.png" alt="Green Light Drivers Ed & DUI School LLC" class="login-logo" />
+      <div>
+        <span class="eyebrow">Secure access</span>
+        <h1>Green Light Outreach Login</h1>
+      </div>
+      <label class="field">
+        <span>Email</span>
+        <input id="loginEmail" type="email" autocomplete="username" required />
+      </label>
+      <label class="field">
+        <span>Password</span>
+        <input id="loginPassword" type="password" autocomplete="current-password" required />
+      </label>
+      <button class="button button-primary" type="submit">Login</button>
+      <div class="inline-feedback" id="loginMessage" role="status" aria-live="polite"></div>
+    </form>
+  </section>
+
+  <div class="app-shell section-hidden" id="appShell">
     <aside class="sidebar" aria-label="Primary navigation">
       <div class="brand">
         <img src="logo.png" alt="Green Light Drivers Ed & DUI School LLC" class="brand-logo" />
@@ -26,7 +46,7 @@
           <span class="nav-icon">S</span>
           Search Prospects
         </a>
-        <a class="nav-link" href="#campaign" data-section="campaign">
+        <a class="nav-link" href="#campaign" data-section="campaign" data-min-role="manager">
           <span class="nav-icon">C</span>
           Run Campaign
         </a>
@@ -34,37 +54,41 @@
           <span class="nav-icon">D</span>
           Prospect Database
         </a>
-        <a class="nav-link" href="#manual-add" data-section="manual-add">
+        <a class="nav-link" href="#manual-add" data-section="manual-add" data-min-role="manager">
           <span class="nav-icon">A</span>
           Add Prospect
         </a>
-        <a class="nav-link" href="#import-excel" data-section="import-excel">
+        <a class="nav-link" href="#import-excel" data-section="import-excel" data-min-role="manager">
           <span class="nav-icon">I</span>
           Import Excel
         </a>
-        <a class="nav-link" href="#outreach" data-section="outreach">
+        <a class="nav-link" href="#outreach" data-section="outreach" data-min-role="manager">
           <span class="nav-icon">O</span>
           Outreach
         </a>
-        <a class="nav-link" href="#follow-ups" data-section="follow-ups">
+        <a class="nav-link" href="#follow-ups" data-section="follow-ups" data-min-role="manager">
           <span class="nav-icon">F</span>
           Follow-Up Center
         </a>
-        <a class="nav-link" href="#newsletters" data-section="newsletters">
+        <a class="nav-link" href="#newsletters" data-section="newsletters" data-min-role="manager">
           <span class="nav-icon">N</span>
           Newsletter Center
         </a>
-        <a class="nav-link" href="#email-template" data-section="email-template">
+        <a class="nav-link" href="#email-template" data-section="email-template" data-min-role="admin">
           <span class="nav-icon">T</span>
           Email Template
         </a>
-        <a class="nav-link" href="#logs" data-section="logs">
+        <a class="nav-link" href="#logs" data-section="logs" data-min-role="manager">
           <span class="nav-icon">L</span>
           Email Logs
         </a>
-        <a class="nav-link" href="#settings" data-section="settings">
+        <a class="nav-link" href="#settings" data-section="settings" data-min-role="admin">
           <span class="nav-icon">W</span>
           Workspace
+        </a>
+        <a class="nav-link" href="#users" data-section="users" data-min-role="admin">
+          <span class="nav-icon">U</span>
+          Users
         </a>
       </nav>
 
@@ -72,6 +96,12 @@
         <span class="panel-kicker">System</span>
         <strong>Prospective client outreach ready</strong>
         <p>Prospect discovery, email finding, and outreach tracking are connected through FastAPI.</p>
+      </div>
+      <div class="sidebar-panel auth-panel">
+        <span class="panel-kicker">Signed in</span>
+        <strong id="currentUserEmail">Not signed in</strong>
+        <p id="currentUserRole">staff</p>
+        <button class="button button-ghost" id="logoutButton" type="button">Logout</button>
       </div>
     </aside>
 
@@ -274,7 +304,7 @@
         </div>
       </section>
 
-      <section class="panel campaign-panel" id="campaign">
+      <section class="panel campaign-panel" id="campaign" data-min-role="manager">
         <div class="section-heading">
           <div>
             <span class="eyebrow">One-click automation</span>
@@ -338,7 +368,7 @@
         </div>
       </section>
 
-      <section class="panel follow-up-panel" id="follow-ups">
+      <section class="panel follow-up-panel" id="follow-ups" data-min-role="manager">
         <div class="section-heading follow-up-heading">
           <div>
             <span class="eyebrow">Follow-up management</span>
@@ -453,7 +483,7 @@
         </div>
       </section>
 
-      <section class="panel newsletter-panel section-hidden" id="newsletters">
+      <section class="panel newsletter-panel section-hidden" id="newsletters" data-min-role="manager">
         <div class="section-heading newsletter-heading">
           <div>
             <span class="eyebrow">Owner newsletter tools</span>
@@ -702,7 +732,7 @@
           <div class="inline-feedback" id="searchMessage" role="status" aria-live="polite"></div>
         </article>
 
-        <article class="panel outreach-panel" id="outreach">
+        <article class="panel outreach-panel" id="outreach" data-min-role="manager">
           <div class="section-heading">
             <div>
               <span class="eyebrow">Campaign control</span>
@@ -739,7 +769,7 @@
       </section>
 
       <section class="owner-tools-grid">
-        <article class="panel manual-add-panel" id="manual-add">
+        <article class="panel manual-add-panel" id="manual-add" data-min-role="manager">
           <div class="section-heading">
             <div>
               <span class="eyebrow">Owner contact tools</span>
@@ -788,7 +818,7 @@
           <div class="inline-feedback" id="manualAddMessage" role="status" aria-live="polite"></div>
         </article>
 
-        <article class="panel import-panel" id="import-excel">
+        <article class="panel import-panel" id="import-excel" data-min-role="manager">
           <div class="section-heading">
             <div>
               <span class="eyebrow">Owner contact tools</span>
@@ -818,7 +848,7 @@
         </article>
       </section>
 
-      <section class="panel template-panel" id="email-template">
+      <section class="panel template-panel" id="email-template" data-min-role="admin">
         <div class="section-heading">
           <div>
             <span class="eyebrow">Owner controls</span>
@@ -915,7 +945,7 @@
         </div>
       </section>
 
-      <section class="panel table-panel" id="logs">
+      <section class="panel table-panel" id="logs" data-min-role="manager">
         <div class="section-heading table-heading">
           <div>
             <span class="eyebrow">Audit </span>
@@ -946,7 +976,7 @@
         </div>
       </section>
 
-      <section class="settings-panel" id="settings">
+      <section class="settings-panel" id="settings" data-min-role="admin">
         <div class="section-heading">
           <div>
             <span class="eyebrow">Workspace</span>
@@ -979,6 +1009,101 @@
           </button>
         </div>
         <div class="reset-campaign-result" id="resetCampaignResult" role="status" aria-live="polite"></div>
+      </section>
+
+      <section class="panel user-management-panel" id="users" data-min-role="admin">
+        <div class="section-heading">
+          <div>
+            <span class="eyebrow">Administration</span>
+            <h2>User Management</h2>
+          </div>
+          <span class="panel-badge">Admin</span>
+        </div>
+
+        <form class="user-create-form" id="userCreateForm">
+          <label class="field">
+            <span>Email</span>
+            <input id="newUserEmail" type="email" required />
+          </label>
+          <label class="field">
+            <span>Name</span>
+            <input id="newUserName" type="text" />
+          </label>
+          <label class="field">
+            <span>Role</span>
+            <select id="newUserRole">
+              <option value="staff">Staff</option>
+              <option value="manager">Manager</option>
+              <option value="admin">Admin</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>Password</span>
+            <input id="newUserPassword" type="text" minlength="10" autocomplete="new-password" placeholder="Optional" />
+          </label>
+          <button class="button button-secondary" id="generatePasswordButton" type="button">Generate Password</button>
+          <button class="button button-primary" type="submit">Create User</button>
+        </form>
+
+        <div class="inline-feedback" id="userManagementMessage" role="status" aria-live="polite"></div>
+
+        <div class="account-details-card" id="accountDetailsCard" hidden>
+          <div>
+            <strong>Temporary password is shown once. Copy it before closing.</strong>
+          </div>
+          <pre id="accountDetailsText"></pre>
+          <button class="button button-secondary" id="copyAccountDetailsButton" type="button">Copy Account Details</button>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Email</th>
+                <th>Name</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>Last Login</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody id="usersTable">
+              <tr>
+                <td colspan="6">
+                  <div class="table-state">Loading users...</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="section-heading table-heading audit-heading">
+          <div>
+            <span class="eyebrow">Audit</span>
+            <h2>Recent Audit Events</h2>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Event</th>
+                <th>Actor</th>
+                <th>Target</th>
+                <th>IP</th>
+              </tr>
+            </thead>
+            <tbody id="auditLogsTable">
+              <tr>
+                <td colspan="5">
+                  <div class="table-state">Loading audit events...</div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
   </div>
@@ -1062,6 +1187,6 @@
 
   <div class="toast-region" id="toastRegion" aria-live="polite" aria-label="Notifications"></div>
 
-  <script src="app.js"></script>
+  <script src="./app.js?v=local-api"></script>
 </body>
 </html>

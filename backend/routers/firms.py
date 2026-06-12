@@ -5,20 +5,22 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, UploadFile
-from sqlalchemy import text
+from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 import crud
 import models
 import schemas
-from database import DATABASE_PATH, SessionLocal
+from audit import write_audit_log
+from database import DATABASE_PATH, IS_SQLITE, SessionLocal
+from security import get_current_user, require_min_role, require_role
 from services.lead_finder import GoogleMapsConfigurationError, GoogleMapsSearchError, search_law_firms
 from services.email_generator import DEFAULT_BODY_TEXT, DEFAULT_SUBJECT, generate_outreach_email, is_official_template
 from services.email_sender import check_smtp_config, safe_email_error_message, send_email
 from services.gmail_reply_tracker import check_gmail_replies
 
-router = APIRouter(tags=["firms"])
+router = APIRouter(tags=["firms"], dependencies=[Depends(get_current_user)])
 
 FOLLOW_UP_SUBJECT = "Follow-Up - Green Light Drivers Ed & DUI School LLC"
 FOLLOW_UP_SIGNATURE_IMAGE_HTML = '<img src="cid:signature_image" alt="Signature" style="width:140px; max-width:140px; display:block; margin:8px 0 4px 0;">'
@@ -92,6 +94,9 @@ def save_auto_follow_up_settings(settings: dict):
 
 
 def ensure_follow_up_columns(db: Session):
+    if not IS_SQLITE:
+        return
+
     columns = {
         row[1]
         for row in db.execute(text("PRAGMA table_info(firms)")).fetchall()
@@ -105,6 +110,9 @@ def ensure_follow_up_columns(db: Session):
 
     if "last_follow_up_date" not in columns:
         db.execute(text("ALTER TABLE firms ADD COLUMN last_follow_up_date DATETIME"))
+
+    if "notes" not in columns:
+        db.execute(text("ALTER TABLE firms ADD COLUMN notes TEXT"))
 
     db.commit()
 
@@ -130,10 +138,7 @@ def utc_datetime_iso(value):
 
 
 def table_exists(db: Session, table_name: str):
-    return db.execute(
-        text("SELECT name FROM sqlite_master WHERE type = 'table' AND name = :table_name"),
-        {"table_name": table_name}
-    ).fetchone() is not None
+    return inspect(db.bind).has_table(table_name)
 
 
 def quoted_identifier(identifier: str):
@@ -141,20 +146,25 @@ def quoted_identifier(identifier: str):
 
 
 @router.post("/admin/reset-campaign-data")
-def reset_campaign_data(db: Session = Depends(get_db)):
+def reset_campaign_data(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("admin")),
+):
     backups_dir = DATABASE_PATH.parent / "backups"
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     backup_name = f"firms_backup_{timestamp}.db"
     backup_path = backups_dir / backup_name
 
-    try:
-        backups_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(DATABASE_PATH, backup_path)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Backup failed. Campaign data was not cleared: {exc}"
-        ) from exc
+    if IS_SQLITE:
+        try:
+            backups_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(DATABASE_PATH, backup_path)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Backup failed. Campaign data was not cleared: {exc}"
+            ) from exc
 
     deleted = {table_name: 0 for table_name in CAMPAIGN_RESET_TABLES}
 
@@ -173,11 +183,19 @@ def reset_campaign_data(db: Session = Depends(get_db)):
             deleted[table_name] = db.execute(text(f"SELECT COUNT(*) FROM {quoted_table}")).scalar() or 0
             db.execute(text(f"DELETE FROM {quoted_table}"))
 
-        if table_exists(db, "sqlite_sequence") and existing_tables:
+        if IS_SQLITE and table_exists(db, "sqlite_sequence") and existing_tables:
             for table_name in CAMPAIGN_RESET_TABLES:
                 if table_name in existing_tables:
                     db.execute(text("DELETE FROM sqlite_sequence WHERE name = :table_name"), {"table_name": table_name})
 
+        write_audit_log(
+            db,
+            "database.reset",
+            actor=current_user,
+            request=request,
+            target_type="campaign_data",
+            details={"deleted": deleted, "backup_file": f"backups/{backup_name}" if IS_SQLITE else None},
+        )
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -188,8 +206,8 @@ def reset_campaign_data(db: Session = Depends(get_db)):
 
     return {
         "success": True,
-        "message": "Campaign data cleared successfully. Backup created first.",
-        "backup_file": f"backups/{backup_name}",
+        "message": "Campaign data cleared successfully. Backup created first." if IS_SQLITE else "Campaign data cleared successfully.",
+        "backup_file": f"backups/{backup_name}" if IS_SQLITE else None,
         "deleted": deleted,
     }
 
@@ -298,7 +316,7 @@ def email_failure_reason(error: Exception):
     return safe_email_error_message(error)
 
 
-def send_follow_up_for_firm(firm, db: Session):
+def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None, request: Request | None = None):
     follow_up_type = next_follow_up_type(firm.follow_up_count or 0)
     body = follow_up_email_body(firm.firm_name)
     sent_at = utc_now()
@@ -324,6 +342,15 @@ def send_follow_up_for_firm(firm, db: Session):
         firm.last_contacted = sent_at
         firm.last_follow_up_date = sent_at
         firm.follow_up_count = (firm.follow_up_count or 0) + 1
+        write_audit_log(
+            db,
+            "campaign.follow_up_sent",
+            actor=actor,
+            request=request,
+            target_type="firm",
+            target_id=firm.id,
+            details={"email": firm.email, "follow_up_type": follow_up_type, "subject": log.subject},
+        )
         db.commit()
 
         return {
@@ -350,6 +377,15 @@ def send_follow_up_for_firm(firm, db: Session):
         )
 
         db.add(log)
+        write_audit_log(
+            db,
+            "campaign.follow_up_failed",
+            actor=actor,
+            request=request,
+            target_type="firm",
+            target_id=firm.id,
+            details={"email": firm.email, "follow_up_type": follow_up_type, "error": failure_reason},
+        )
         db.commit()
 
         return {
@@ -404,7 +440,12 @@ def get_active_email_template(db: Session = Depends(get_db)):
 
 
 @router.post("/templates/", response_model=schemas.EmailTemplateResponse, tags=["templates"])
-def create_email_template(template: schemas.EmailTemplateCreate, db: Session = Depends(get_db)):
+def create_email_template(
+    template: schemas.EmailTemplateCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("admin")),
+):
     if template.is_active:
         deactivate_templates(db)
 
@@ -416,6 +457,14 @@ def create_email_template(template: schemas.EmailTemplateCreate, db: Session = D
     )
 
     db.add(db_template)
+    write_audit_log(
+        db,
+        "template.created",
+        actor=current_user,
+        request=request,
+        target_type="email_template",
+        details={"name": template.name, "is_active": template.is_active},
+    )
     db.commit()
     db.refresh(db_template)
 
@@ -426,7 +475,9 @@ def create_email_template(template: schemas.EmailTemplateCreate, db: Session = D
 def update_email_template(
     template_id: int,
     template: schemas.EmailTemplateUpdate,
-    db: Session = Depends(get_db)
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("admin")),
 ):
     db_template = db.query(models.EmailTemplate).filter(models.EmailTemplate.id == template_id).first()
 
@@ -441,6 +492,15 @@ def update_email_template(
     for field, value in updates.items():
         setattr(db_template, field, value)
 
+    write_audit_log(
+        db,
+        "template.updated",
+        actor=current_user,
+        request=request,
+        target_type="email_template",
+        target_id=template_id,
+        details={"fields": sorted(updates.keys())},
+    )
     db.commit()
     db.refresh(db_template)
 
@@ -448,7 +508,12 @@ def update_email_template(
 
 
 @router.post("/templates/{template_id}/activate/", response_model=schemas.EmailTemplateResponse, tags=["templates"])
-def activate_email_template(template_id: int, db: Session = Depends(get_db)):
+def activate_email_template(
+    template_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_role("admin")),
+):
     db_template = db.query(models.EmailTemplate).filter(models.EmailTemplate.id == template_id).first()
 
     if not db_template:
@@ -456,6 +521,14 @@ def activate_email_template(template_id: int, db: Session = Depends(get_db)):
 
     deactivate_templates(db)
     db_template.is_active = True
+    write_audit_log(
+        db,
+        "template.activated",
+        actor=current_user,
+        request=request,
+        target_type="email_template",
+        target_id=template_id,
+    )
     db.commit()
     db.refresh(db_template)
 
@@ -463,7 +536,11 @@ def activate_email_template(template_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/firms/", response_model=schemas.FirmResponse)
-def add_firm(firm: schemas.FirmCreate, db: Session = Depends(get_db)):
+def add_firm(
+    firm: schemas.FirmCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     return crud.create_firm(db, firm)
 
 
@@ -476,7 +553,8 @@ def list_firms(db: Session = Depends(get_db)):
 def update_firm_status(
     firm_id: int,
     status_update: schemas.FirmStatusUpdate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
 ):
     firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
 
@@ -484,6 +562,25 @@ def update_firm_status(
         raise HTTPException(status_code=404, detail="Firm not found")
 
     firm.status = status_update.status
+    db.commit()
+    db.refresh(firm)
+
+    return firm
+
+
+@router.put("/firms/{firm_id}/notes", response_model=schemas.FirmResponse)
+def update_firm_notes(
+    firm_id: int,
+    notes_update: schemas.FirmNotesUpdate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
+
+    if not firm:
+        raise HTTPException(status_code=404, detail="Firm not found")
+
+    firm.notes = notes_update.notes
     db.commit()
     db.refresh(firm)
 
@@ -546,7 +643,11 @@ def excel_row_item(row_number: int, row_data: dict, reason: str):
 
 
 @router.post("/firms/import-excel/")
-async def import_excel_firms(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def import_excel_firms(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     filename = file.filename or ""
 
     if not filename.lower().endswith(".xlsx"):
@@ -722,7 +823,10 @@ def get_firm_analytics(db: Session = Depends(get_db)):
 
 
 @router.get("/firms/email-logs/")
-def get_email_logs(db: Session = Depends(get_db)):
+def get_email_logs(
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     logs = db.query(models.EmailLog).order_by(models.EmailLog.sent_at.asc()).all()
 
     return [
@@ -742,13 +846,32 @@ def get_email_logs(db: Session = Depends(get_db)):
 
 
 @router.get("/firms/email-config-check/")
-def get_email_config_check():
+def get_email_config_check(current_user: models.User = Depends(require_role("admin"))):
     return check_smtp_config()
 
 
 @router.get("/firms/check-replies/")
-def check_replies(db: Session = Depends(get_db)):
-    return check_gmail_replies(db)
+def check_replies(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
+    result = check_gmail_replies(db)
+    write_audit_log(
+        db,
+        "gmail.reply_check",
+        actor=current_user,
+        request=request,
+        target_type="gmail",
+        details={
+            "success": result.get("success"),
+            "checked_messages": result.get("checked_messages"),
+            "replies_found": result.get("replies_found"),
+            "updated_firms": result.get("updated_firms"),
+        },
+    )
+    db.commit()
+    return result
 
 
 @router.get("/firms/follow-ups/")
@@ -780,12 +903,19 @@ def get_auto_follow_up_settings():
 
 
 @router.post("/firms/auto-follow-up-settings/")
-def update_auto_follow_up_settings(settings: dict = Body(...)):
+def update_auto_follow_up_settings(
+    settings: dict = Body(...),
+    current_user: models.User = Depends(require_role("admin")),
+):
     return save_auto_follow_up_settings(settings)
 
 
 @router.post("/firms/run-auto-follow-ups/")
-def run_auto_follow_ups(db: Session = Depends(get_db)):
+def run_auto_follow_ups(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     settings = load_auto_follow_up_settings()
 
     if not settings["enabled"]:
@@ -821,7 +951,7 @@ def run_auto_follow_ups(db: Session = Depends(get_db)):
     failed = []
 
     for index, firm in enumerate(firms_to_send):
-        result = send_follow_up_for_firm(firm, db)
+        result = send_follow_up_for_firm(firm, db, actor=current_user, request=request)
 
         if result["success"]:
             sent.append(result)
@@ -854,7 +984,13 @@ def search_firms(keyword: str, city: str, state: str):
 
 
 @router.post("/firms/search-and-save/", response_model=list[schemas.FirmResponse])
-def search_and_save_firms(keyword: str, city: str, state: str, db: Session = Depends(get_db)):
+def search_and_save_firms(
+    keyword: str,
+    city: str,
+    state: str,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user),
+):
     try:
         results = search_law_firms(keyword, city, state)
     except GoogleMapsConfigurationError as exc:
@@ -914,13 +1050,15 @@ def has_sent_email_log(db: Session, firm_id: int):
 
 @router.post("/firms/run-campaign/")
 def run_campaign(
+    request: Request,
     keyword: str,
     city: str,
     state: str,
     limit: int = 3,
     delay_seconds: int = 10,
     send_immediately: bool = True,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
 ):
     safe_limit = max(0, limit)
     safe_delay_seconds = max(0, delay_seconds)
@@ -1039,6 +1177,15 @@ def run_campaign(
 
                 db.add(log)
                 update_initial_contact_tracking(firm, sent_at)
+                write_audit_log(
+                    db,
+                    "campaign.email_sent",
+                    actor=current_user,
+                    request=request,
+                    target_type="firm",
+                    target_id=firm.id,
+                    details={"email": firm.email, "subject": subject, "source": "run_campaign"},
+                )
                 db.commit()
 
                 item = campaign_firm_item(firm, "Email sent", outcome="sent")
@@ -1058,6 +1205,15 @@ def run_campaign(
                 )
 
                 db.add(log)
+                write_audit_log(
+                    db,
+                    "campaign.email_failed",
+                    actor=current_user,
+                    request=request,
+                    target_type="firm",
+                    target_id=firm.id,
+                    details={"email": firm.email, "subject": subject, "source": "run_campaign", "error": failure_reason},
+                )
                 db.commit()
 
                 item = campaign_firm_item(firm, "Email send failed", error=failure_reason, outcome="failed")
@@ -1104,7 +1260,13 @@ def generate_email_for_firm(firm_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/firms/{firm_id}/send-test-email/")
-def send_test_email_for_firm(firm_id: int, test_email: str, db: Session = Depends(get_db)):
+def send_test_email_for_firm(
+    firm_id: int,
+    test_email: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
 
     if not firm:
@@ -1135,6 +1297,15 @@ def send_test_email_for_firm(firm_id: int, test_email: str, db: Session = Depend
         )
 
         db.add(log)
+        write_audit_log(
+            db,
+            "campaign.test_email_failed",
+            actor=current_user,
+            request=request,
+            target_type="firm",
+            target_id=firm.id,
+            details={"email": test_email, "error": failure_reason},
+        )
         db.commit()
 
         return {
@@ -1149,7 +1320,12 @@ def send_test_email_for_firm(firm_id: int, test_email: str, db: Session = Depend
 
 
 @router.post("/firms/{firm_id}/send-outreach/")
-def send_outreach_email(firm_id: int, db: Session = Depends(get_db)):
+def send_outreach_email(
+    firm_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
 
     if not firm:
@@ -1188,6 +1364,15 @@ def send_outreach_email(firm_id: int, db: Session = Depends(get_db)):
 
         db.add(log)
         update_initial_contact_tracking(firm, sent_at)
+        write_audit_log(
+            db,
+            "campaign.email_sent",
+            actor=current_user,
+            request=request,
+            target_type="firm",
+            target_id=firm.id,
+            details={"email": firm.email, "subject": generated["subject"], "source": "single_outreach"},
+        )
         db.commit()
 
         return {
@@ -1209,6 +1394,15 @@ def send_outreach_email(firm_id: int, db: Session = Depends(get_db)):
         )
 
         db.add(log)
+        write_audit_log(
+            db,
+            "campaign.email_failed",
+            actor=current_user,
+            request=request,
+            target_type="firm",
+            target_id=firm.id,
+            details={"email": firm.email, "subject": generated["subject"], "source": "single_outreach", "error": failure_reason},
+        )
         db.commit()
 
         return {
@@ -1218,7 +1412,12 @@ def send_outreach_email(firm_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/firms/{firm_id}/send-follow-up/")
-def send_follow_up_email(firm_id: int, db: Session = Depends(get_db)):
+def send_follow_up_email(
+    firm_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
 
     if not firm:
@@ -1230,7 +1429,7 @@ def send_follow_up_email(firm_id: int, db: Session = Depends(get_db)):
     if not is_follow_up_eligible(firm, db):
         return {"success": False, "error": "This prospect is not eligible for a follow-up yet."}
 
-    result = send_follow_up_for_firm(firm, db)
+    result = send_follow_up_for_firm(firm, db, actor=current_user, request=request)
 
     if not result["success"]:
         return {"success": False, "error": result["error"]}
@@ -1239,7 +1438,13 @@ def send_follow_up_email(firm_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/firms/send-batch-outreach/")
-def send_batch_outreach(limit: int = 3, delay_seconds: int = 10, db: Session = Depends(get_db)):
+def send_batch_outreach(
+    request: Request,
+    limit: int = 3,
+    delay_seconds: int = 10,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_min_role("manager")),
+):
     firms = db.query(models.Firm).filter(
         models.Firm.email.isnot(None),
         models.Firm.status != "Email Sent"
@@ -1275,6 +1480,15 @@ def send_batch_outreach(limit: int = 3, delay_seconds: int = 10, db: Session = D
 
             db.add(log)
             update_initial_contact_tracking(firm, sent_at)
+            write_audit_log(
+                db,
+                "campaign.email_sent",
+                actor=current_user,
+                request=request,
+                target_type="firm",
+                target_id=firm.id,
+                details={"email": firm.email, "subject": generated["subject"], "source": "batch_outreach"},
+            )
             db.commit()
 
             sent.append({
@@ -1297,6 +1511,15 @@ def send_batch_outreach(limit: int = 3, delay_seconds: int = 10, db: Session = D
             )
 
             db.add(log)
+            write_audit_log(
+                db,
+                "campaign.email_failed",
+                actor=current_user,
+                request=request,
+                target_type="firm",
+                target_id=firm.id,
+                details={"email": firm.email, "subject": generated["subject"], "source": "batch_outreach", "error": failure_reason},
+            )
             db.commit()
 
             failed.append({

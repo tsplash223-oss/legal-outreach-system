@@ -1,18 +1,9 @@
-const LIVE_API_BASE = "https://legal-outreach-system.onrender.com";
-const LOCAL_API_BASE = "http://127.0.0.1:8000";
-
-const isLocalFrontend =
-  window.location.hostname === "localhost" ||
-  window.location.hostname === "127.0.0.1";
-
-const API_BASE = isLocalFrontend ? LOCAL_API_BASE : LIVE_API_BASE;
-
+const API_BASE = "http://127.0.0.1:8000";
 window.API_BASE = API_BASE;
-
-console.log("Frontend hostname:", window.location.hostname);
-console.log("Using API_BASE:", API_BASE);
+console.log("Using LOCAL API_BASE:", API_BASE);
 
 const DEMO_MODE = false;
+const AUTH_TOKEN_KEY = "greenLightAuthToken";
 
 const DEMO_ONLY_MESSAGE = "Demo only. Live sending is disabled.";
 const SIGNATURE_IMAGE_PLACEHOLDER = "{{signature_image}}";
@@ -175,6 +166,10 @@ let autoFollowUpSettingsCache = demoAutoFollowUpSettings;
 let manualCrmCountsCache = loadManualCrmCounts();
 let newsletterContactsCache = [];
 let selectedNewsletterContactIds = new Set();
+let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+let currentUser = null;
+let usersCache = [];
+let auditLogsCache = [];
 
 const MAIN_PAGE_SELECTORS = [
   "#dashboard",
@@ -188,7 +183,8 @@ const MAIN_PAGE_SELECTORS = [
   "#email-template",
   "#firms",
   "#logs",
-  "#settings"
+  "#settings",
+  "#users"
 ];
 const NEWSLETTER_SECTION_ID = "newsletters";
 
@@ -368,13 +364,115 @@ function setSystemStatus(mode, detail) {
 }
 
 function getBackendUnavailableMessage() {
-  return isLocalFrontend
-    ? "Start FastAPI at http://127.0.0.1:8000 and refresh."
-    : "Backend unavailable. Live API connection failed. Please check the Render backend service.";
+  return "Start FastAPI at http://127.0.0.1:8000 and refresh.";
 }
 
 function setBackendUnavailableStatus() {
   setSystemStatus("Backend Unavailable", getBackendUnavailableMessage());
+}
+
+function hasRole(role) {
+  const levels = { staff: 1, manager: 2, admin: 3 };
+  return (levels[currentUser?.role] || 0) >= (levels[role] || 0);
+}
+
+function clearAuth() {
+  authToken = "";
+  currentUser = null;
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function showLoginGate(message = "") {
+  document.body.classList.add("auth-locked");
+  getElement("loginScreen")?.classList.remove("section-hidden");
+  getElement("appShell")?.classList.add("section-hidden");
+  setText("loginMessage", message);
+}
+
+function showApplication() {
+  document.body.classList.remove("auth-locked");
+  getElement("loginScreen")?.classList.add("section-hidden");
+  getElement("appShell")?.classList.remove("section-hidden");
+  setText("currentUserEmail", currentUser?.email || "");
+  setText("currentUserRole", currentUser?.role || "");
+  applyRoleVisibility();
+}
+
+function applyRoleVisibility() {
+  const isAdmin = hasRole("admin");
+  const isManager = hasRole("manager");
+
+  document.querySelectorAll("[data-min-role]").forEach((element) => {
+    element.hidden = !hasRole(element.dataset.minRole);
+  });
+
+  [
+    "campaignButton",
+    "importExcelButton",
+    "batchButton",
+    "previewSendButton",
+    "newsletterDraftButton",
+    "newsletterSendButton",
+    "runAutoFollowUpsButton"
+  ].forEach((id) => {
+    const button = getElement(id);
+    if (button && !isManager) button.disabled = true;
+  });
+
+  [
+    "templateSaveButton",
+    "templateActivateButton",
+    "saveAutoFollowUpSettingsButton",
+    "resetCampaignButton"
+  ].forEach((id) => {
+    const button = getElement(id);
+    if (button && !isAdmin) button.disabled = true;
+  });
+}
+
+async function login(event) {
+  event.preventDefault();
+  const email = getElement("loginEmail")?.value.trim();
+  const password = getElement("loginPassword")?.value || "";
+  const message = getElement("loginMessage");
+
+  if (message) message.textContent = "Signing in...";
+
+  try {
+    const data = await fetchJson("/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, password })
+    });
+
+    authToken = data.access_token;
+    currentUser = data.user;
+    localStorage.setItem(AUTH_TOKEN_KEY, authToken);
+    showApplication();
+    await loadDashboard();
+  } catch (error) {
+    if (message) message.textContent = error.message || "Login failed.";
+  }
+}
+
+async function logout() {
+  clearAuth();
+  showLoginGate("Signed out.");
+}
+
+async function initializeAuth() {
+  if (!authToken) {
+    showLoginGate();
+    return;
+  }
+
+  try {
+    currentUser = await fetchJson("/auth/me");
+    showApplication();
+    await loadDashboard();
+  } catch (error) {
+    showLoginGate("Please sign in.");
+  }
 }
 
 function getTemplateBody(template) {
@@ -428,17 +526,37 @@ function setActionButtonsForMode() {
       button.classList.remove("disabled");
     }
   });
+
+  applyRoleVisibility();
 }
 
 async function fetchJson(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, options);
+  const headers = new Headers(options.headers || {});
+
+  if (authToken && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${authToken}`);
+  }
+
+  const response = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers
+  });
+
+  if (response.status === 401) {
+    clearAuth();
+    showLoginGate("Please sign in again.");
+  }
 
   if (!response.ok) {
     let message = `API request failed: ${response.status}`;
 
+    if (response.status === 403) {
+      message = "You do not have permission to perform this action.";
+    }
+
     try {
       const errorData = await response.json();
-      message = errorData.detail || errorData.message || message;
+      message = response.status === 403 ? message : errorData.detail || errorData.message || message;
     } catch (error) {
       // Keep the HTTP status fallback when the response is not JSON.
     }
@@ -531,7 +649,7 @@ function renderFirms(firms) {
     const sendButton =
       DEMO_MODE
         ? `<button class="button button-ghost" type="button" disabled>${DEMO_ONLY_MESSAGE}</button>`
-        : hasEmail && firm.status === "Not Contacted"
+        : hasEmail && firm.status === "Not Contacted" && hasRole("manager")
           ? `<button class="button button-ghost" type="button" onclick="sendOutreach(${firm.id})">Send Outreach</button>`
           : `<button class="button button-ghost" type="button" disabled>Unavailable</button>`;
 
@@ -1146,6 +1264,10 @@ async function loadLogs() {
     return demoLogs;
   }
 
+  if (!hasRole("manager")) {
+    return [];
+  }
+
   return fetchJson("/firms/email-logs/");
 }
 
@@ -1188,6 +1310,191 @@ async function loadNewsletterContacts() {
   }
 
   return fetchJson("/newsletters/contacts/");
+}
+
+async function loadUsers() {
+  if (!hasRole("admin")) return [];
+  return fetchJson("/users/");
+}
+
+async function loadAuditLogs() {
+  if (!hasRole("admin")) return [];
+  return fetchJson("/audit-logs/?limit=100");
+}
+
+function renderUsers(users) {
+  const table = getElement("usersTable");
+  if (!table) return;
+
+  if (!users.length) {
+    table.innerHTML = `<tr><td colspan="6"><div class="table-state">No users found.</div></td></tr>`;
+    return;
+  }
+
+  table.innerHTML = users.map((user) => `
+    <tr>
+      <td>${escapeHtml(user.email)}</td>
+      <td>
+        <input class="user-name-input" data-user-id="${user.id}" type="text" value="${escapeHtml(user.full_name || "")}" placeholder="Full name" />
+      </td>
+      <td>
+        <select class="role-select" data-user-id="${user.id}" ${user.id === currentUser?.id ? "disabled" : ""}>
+          ${["admin", "manager", "staff"].map((role) => `<option value="${role}" ${user.role === role ? "selected" : ""}>${role}</option>`).join("")}
+        </select>
+      </td>
+      <td>${statusBadge(user.is_active ? "Active" : "Disabled")}</td>
+      <td>${escapeHtml(formatLocalTimestamp(user.last_login_at))}</td>
+      <td>
+        <button class="button button-ghost user-toggle-button" type="button" data-user-id="${user.id}" data-active="${user.is_active}" ${user.id === currentUser?.id ? "disabled" : ""}>
+          ${user.is_active ? "Disable" : "Enable"}
+        </button>
+        <button class="button button-ghost user-reset-password-button" type="button" data-user-id="${user.id}">
+          Reset Password
+        </button>
+        <button class="button button-danger user-delete-button" type="button" data-user-id="${user.id}" ${user.id === currentUser?.id ? "disabled" : ""}>
+          Delete
+        </button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function renderAuditLogs(logs) {
+  const table = getElement("auditLogsTable");
+  if (!table) return;
+
+  if (!logs.length) {
+    table.innerHTML = `<tr><td colspan="5"><div class="table-state">No audit events yet.</div></td></tr>`;
+    return;
+  }
+
+  table.innerHTML = logs.map((log) => `
+    <tr>
+      <td>${escapeHtml(formatLocalTimestamp(log.created_at))}</td>
+      <td>${escapeHtml(log.event_type)}</td>
+      <td>${escapeHtml(log.actor_email || "System")}</td>
+      <td>${escapeHtml([log.target_type, log.target_id].filter(Boolean).join(" #") || "N/A")}</td>
+      <td>${escapeHtml(log.ip_address || "N/A")}</td>
+    </tr>
+  `).join("");
+}
+
+function generateClientPassword(length = 18) {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*";
+  const cryptoRef = window.crypto || window.msCrypto;
+  const values = new Uint32Array(length);
+  cryptoRef.getRandomValues(values);
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("");
+}
+
+function accountDetailsText(account) {
+  return `Green Light Outreach Login Details
+
+Name: ${account.full_name || ""}
+Email: ${account.email || ""}
+Role: ${account.role || ""}
+Temporary Password: ${account.temporary_password || ""}
+Login URL: ${window.location.href.split("#")[0]}
+
+Please log in and change your password after first access.`;
+}
+
+function showAccountDetails(user, temporaryPassword) {
+  const card = getElement("accountDetailsCard");
+  const details = getElement("accountDetailsText");
+  if (!card || !details) return;
+
+  const account = { ...user, temporary_password: temporaryPassword };
+  details.textContent = accountDetailsText(account);
+  card.hidden = false;
+}
+
+async function copyAccountDetails() {
+  const details = getElement("accountDetailsText")?.textContent || "";
+  const message = getElement("userManagementMessage");
+  if (!details) return;
+
+  try {
+    await navigator.clipboard.writeText(details);
+    if (message) message.textContent = "Account details copied.";
+  } catch (error) {
+    if (message) message.textContent = "Unable to copy automatically. Select and copy the details manually.";
+  }
+}
+
+async function createUser(event) {
+  event.preventDefault();
+  const message = getElement("userManagementMessage");
+  const payload = {
+    email: getElement("newUserEmail")?.value.trim(),
+    full_name: getElement("newUserName")?.value.trim() || null,
+    role: getElement("newUserRole")?.value || "staff",
+    password: getElement("newUserPassword")?.value || ""
+  };
+
+  try {
+    const data = await fetchJson("/users/", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    getElement("userCreateForm")?.reset();
+    showAccountDetails(data.user, data.temporary_password);
+    if (message) message.textContent = "User created. Temporary password is shown once.";
+    await refreshAdminData();
+  } catch (error) {
+    if (message) message.textContent = error.message || "Unable to create user.";
+  }
+}
+
+async function updateUser(userId, updates) {
+  const message = getElement("userManagementMessage");
+  try {
+    await fetchJson(`/users/${userId}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates)
+    });
+    if (message) message.textContent = "User updated.";
+    await refreshAdminData();
+  } catch (error) {
+    if (message) message.textContent = error.message || "Unable to update user.";
+  }
+}
+
+async function resetUserPassword(userId) {
+  const message = getElement("userManagementMessage");
+  try {
+    const data = await fetchJson(`/users/${userId}/reset-password`, { method: "POST" });
+    showAccountDetails(data.user, data.temporary_password);
+    if (message) message.textContent = "Password reset. Temporary password is shown once.";
+    await refreshAdminData();
+  } catch (error) {
+    if (message) message.textContent = error.message || "Unable to reset password.";
+  }
+}
+
+async function deleteUser(userId) {
+  const message = getElement("userManagementMessage");
+  const confirmed = confirm("Delete this user account?");
+  if (!confirmed) return;
+
+  try {
+    await fetchJson(`/users/${userId}`, { method: "DELETE" });
+    if (message) message.textContent = "User deleted.";
+    await refreshAdminData();
+  } catch (error) {
+    if (message) message.textContent = error.message || "Unable to delete user.";
+  }
+}
+
+async function refreshAdminData() {
+  if (!hasRole("admin")) return;
+  const [users, auditLogs] = await Promise.all([loadUsers(), loadAuditLogs()]);
+  usersCache = users;
+  auditLogsCache = auditLogs;
+  renderUsers(usersCache);
+  renderAuditLogs(auditLogsCache);
 }
 
 async function updateFirmStatus(firmId, status) {
@@ -1448,7 +1755,8 @@ async function loadDashboard() {
     renderNewsletterStats(newsletterStats);
     renderNewsletterContacts(newsletterContactsCache);
     renderTemplate(template);
-    setSystemStatus("Live Backend Connected", `Using real FastAPI data from ${API_BASE}`);
+    await refreshAdminData();
+    setSystemStatus("Local Backend Connected", `Using FastAPI data from ${API_BASE}`);
     setText("searchMessage", "");
     setText("batchMessage", "Ready to send controlled outreach to eligible prospects.");
   } catch (error) {
@@ -2131,6 +2439,39 @@ function setNewsletterPageMode(sectionId = getSectionFromHash(), shouldScroll = 
 }
 
 function setupEventListeners() {
+  getElement("loginForm")?.addEventListener("submit", login);
+  getElement("logoutButton")?.addEventListener("click", logout);
+  getElement("userCreateForm")?.addEventListener("submit", createUser);
+  getElement("generatePasswordButton")?.addEventListener("click", () => {
+    const input = getElement("newUserPassword");
+    if (input) input.value = generateClientPassword();
+  });
+  getElement("copyAccountDetailsButton")?.addEventListener("click", copyAccountDetails);
+  getElement("usersTable")?.addEventListener("change", (event) => {
+    if (event.target.classList.contains("role-select")) {
+      updateUser(Number(event.target.dataset.userId), { role: event.target.value });
+    }
+
+    if (event.target.classList.contains("user-name-input")) {
+      updateUser(Number(event.target.dataset.userId), { full_name: event.target.value.trim() || null });
+    }
+  });
+  getElement("usersTable")?.addEventListener("click", (event) => {
+    if (event.target.classList.contains("user-toggle-button")) {
+      const userId = Number(event.target.dataset.userId);
+      const isActive = event.target.dataset.active === "true";
+      updateUser(userId, { is_active: !isActive });
+    }
+
+    if (event.target.classList.contains("user-reset-password-button")) {
+      resetUserPassword(Number(event.target.dataset.userId));
+    }
+
+    if (event.target.classList.contains("user-delete-button")) {
+      deleteUser(Number(event.target.dataset.userId));
+    }
+  });
+
   document.querySelectorAll(".nav-link").forEach((link) => {
     link.addEventListener("click", (event) => {
       const sectionId = link.dataset.section || "dashboard";
@@ -2228,5 +2569,5 @@ function setupEventListeners() {
 document.addEventListener("DOMContentLoaded", () => {
   setupEventListeners();
   setNewsletterPageMode(getSectionFromHash(), false);
-  loadDashboard();
+  initializeAuth();
 });

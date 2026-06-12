@@ -3,3 +3,11 @@ __pycache__/
 .env
 *.pyc
 firms.db
+credentials.json
+token.json
+.env
+backend/.env
+backend/credentials.json
+backend/token.json
+backend/firms.db
+backend/backups/

@@ -1,5 +1,5 @@
 {
-  "enabled": false,
-  "daily_limit": 5,
+  "enabled": true,
+  "daily_limit": 25,
   "delay_seconds": 10
 }

@@ -33,6 +33,8 @@ class Firm(Base):
 
     last_follow_up_date = Column(DateTime, nullable=True)
 
+    notes = Column(Text, nullable=True)
+
 
 class EmailLog(Base):
     __tablename__ = "email_logs"
@@ -94,3 +96,31 @@ class NewsletterDraft(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
+    full_name = Column(String, nullable=True)
+    password_hash = Column(String, nullable=False)
+    role = Column(String, default="staff", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_login_at = Column(DateTime, nullable=True)
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    event_type = Column(String, index=True, nullable=False)
+    actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    actor_email = Column(String, nullable=True)
+    target_type = Column(String, nullable=True)
+    target_id = Column(String, nullable=True)
+    details = Column(Text, nullable=True)
+    ip_address = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
