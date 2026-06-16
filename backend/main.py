@@ -62,14 +62,15 @@ allowed_origins = sorted(set(default_origins + frontend_origins + settings.cors_
 
 app = FastAPI(title="Prospective Client Outreach System API")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+@app.middleware("http")
+async def log_unhandled_errors(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logger.exception("Unhandled API error on %s %s", request.method, request.url.path)
+        return JSONResponse(status_code=500, content={"detail": "Internal server error."})
+
 
 app.include_router(auth.router)
 app.include_router(firms.router)
@@ -86,14 +87,6 @@ async def print_cors_origins():
     logger.info(cors_message)
 
 
-@app.middleware("http")
-async def log_unhandled_errors(request: Request, call_next):
-    try:
-        return await call_next(request)
-    except Exception:
-        logger.exception("Unhandled API error on %s %s", request.method, request.url.path)
-        return JSONResponse(status_code=500, content={"detail": "Internal server error."})
-
 @app.get("/")
 def root():
     return {"message": "Prospective Client Outreach System API Running"}
@@ -104,3 +97,18 @@ def health():
     with Session(engine) as db:
         db.execute(text("SELECT 1"))
     return {"status": "ok", "database": "connected"}
+
+
+@app.get("/cors-test")
+def cors_test():
+    return {"cors": "ok"}
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
