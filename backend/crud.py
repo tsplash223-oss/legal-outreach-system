@@ -1,9 +1,17 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 import models
 import schemas
 
 
 def create_firm(db: Session, firm: schemas.FirmCreate):
+    if firm.email:
+        existing_email = db.query(models.Firm).filter(
+            func.lower(models.Firm.email) == firm.email.lower()
+        ).first()
+
+        if existing_email:
+            raise ValueError("A prospect with this email already exists.")
 
     # Check if firm already exists
     existing_firm = db.query(models.Firm).filter(

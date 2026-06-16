@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import inspect, text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import crud
@@ -595,7 +595,20 @@ def add_firm(
             exc,
             firm.model_dump(),
         )
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        status_code = 409 if str(exc) == "A prospect with this email already exists." else 400
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+    except IntegrityError as exc:
+        db.rollback()
+        logger.exception(
+            "Integrity error while adding prospect firm_name=%s email=%s actor=%s",
+            firm.firm_name,
+            firm.email,
+            current_user.email,
+        )
+        message = str(getattr(exc, "orig", exc)).lower()
+        if firm.email and ("email" in message or "unique" in message):
+            raise HTTPException(status_code=409, detail="A prospect with this email already exists.") from exc
+        raise HTTPException(status_code=500, detail="Could not save prospect because of a database constraint. Check backend logs for details.") from exc
     except SQLAlchemyError as exc:
         db.rollback()
         logger.exception(

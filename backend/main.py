@@ -7,10 +7,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from database import engine, Base
+from database import DATABASE_URL, IS_POSTGRESQL, engine, Base, repair_postgresql_id_sequences
 import models
 from routers import auth, firms, newsletters
 from security import hash_password, normalize_email
+from services.email_sender import check_smtp_config
 from services.gmail_reply_tracker import ensure_gmail_api_files_from_env
 from settings import get_settings
 
@@ -78,13 +79,20 @@ app.include_router(newsletters.router)
 
 
 @app.on_event("startup")
-async def print_cors_origins():
+async def startup_checks():
     cors_message = (
         "CORS allowed origins: "
         f"{allowed_origins}; allow_origin_regex=https://.*\\.vercel\\.app"
     )
     print(cors_message)
     logger.info(cors_message)
+
+    repaired_tables = repair_postgresql_id_sequences()
+    if IS_POSTGRESQL:
+        logger.info(
+            "PostgreSQL ID sequence repair completed. repaired_tables=%s",
+            repaired_tables,
+        )
 
 
 @app.get("/")
@@ -97,6 +105,21 @@ def health():
     with Session(engine) as db:
         db.execute(text("SELECT 1"))
     return {"status": "ok", "database": "connected"}
+
+
+@app.get("/health/config")
+def health_config():
+    smtp_config = check_smtp_config()
+
+    return {
+        "database_url_type": "postgresql" if DATABASE_URL.startswith("postgresql") else "sqlite",
+        "gmail_address_present": smtp_config["gmail_address_present"],
+        "gmail_app_password_present": smtp_config["gmail_app_password_present"],
+        "gmail_app_password_length": smtp_config["gmail_app_password_length"],
+        "google_maps_api_key_present": bool(os.getenv("GOOGLE_MAPS_API_KEY", "").strip()),
+        "jwt_secret_present": bool(settings.jwt_secret),
+        "cors_origins_count": len(allowed_origins),
+    }
 
 
 @app.get("/cors-test")

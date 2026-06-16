@@ -2289,7 +2289,7 @@ async function sendFollowUp(firmId) {
       }
       await loadDashboard();
     } else if (message) {
-      message.textContent = data.error || "Unable to send follow-up.";
+      message.textContent = data.detail || data.error || "Unable to send follow-up.";
       message.className = "inline-feedback error";
     }
   } catch (error) {
