@@ -7,7 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
-from sqlalchemy import inspect, text
+from sqlalchemy import func, inspect, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -587,6 +587,15 @@ def add_firm(
             current_user.email,
         )
         return crud.create_firm(db, firm)
+    except crud.DuplicateFirmError as exc:
+        db.rollback()
+        logger.warning(
+            "Invalid add prospect request from %s: %s payload=%s",
+            request.client.host if request.client else "unknown",
+            exc,
+            firm.model_dump(),
+        )
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except ValueError as exc:
         db.rollback()
         logger.warning(
@@ -595,8 +604,7 @@ def add_firm(
             exc,
             firm.model_dump(),
         )
-        status_code = 409 if str(exc) == "A prospect with this email already exists." else 400
-        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except IntegrityError as exc:
         db.rollback()
         logger.exception(
@@ -1099,7 +1107,12 @@ def search_and_save_firms(
             status="Not Contacted"
         )
 
-        saved_firm = crud.create_firm(db, firm_data)
+        try:
+            saved_firm = crud.create_firm(db, firm_data)
+        except crud.DuplicateFirmError as exc:
+            saved_firm = exc.existing_firm or find_existing_campaign_firm(db, firm_data)
+            if not saved_firm:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
         saved_firms.append(saved_firm)
 
     return saved_firms
@@ -1124,6 +1137,49 @@ def campaign_firm_item(firm, reason: str | None = None, error: str | None = None
         item["outcome"] = outcome
 
     return item
+
+
+def campaign_log_firm_action(firm_name, email, city, action, reason=None):
+    logger.info(
+        "Campaign firm firm_name=%s email=%s city=%s action=%s reason=%s",
+        firm_name,
+        email,
+        city,
+        action,
+        reason,
+    )
+
+
+def find_existing_campaign_firm(db: Session, firm_data: schemas.FirmCreate):
+    if firm_data.email:
+        existing_by_email = db.query(models.Firm).filter(
+            func.lower(models.Firm.email) == firm_data.email.lower()
+        ).first()
+
+        if existing_by_email:
+            return existing_by_email
+
+    query = db.query(models.Firm).filter(models.Firm.firm_name == firm_data.firm_name)
+
+    if firm_data.city:
+        query = query.filter(func.lower(models.Firm.city) == firm_data.city.lower())
+
+    if firm_data.website:
+        query = query.filter(func.lower(models.Firm.website) == firm_data.website.lower())
+
+    existing = query.first()
+    if existing:
+        return existing
+
+    if firm_data.city:
+        existing = db.query(models.Firm).filter(
+            models.Firm.firm_name == firm_data.firm_name,
+            func.lower(models.Firm.city) == firm_data.city.lower(),
+        ).first()
+        if existing:
+            return existing
+
+    return db.query(models.Firm).filter(models.Firm.firm_name == firm_data.firm_name).first()
 
 
 def has_sent_email_log(db: Session, firm_id: int):
@@ -1157,6 +1213,8 @@ def run_campaign(
 
     saved_firms = []
     saved_count = 0
+    existing_count = 0
+    skipped_duplicate = []
     skipped_no_email = []
     skipped_already_contacted = []
     skipped_other = []
@@ -1169,16 +1227,14 @@ def run_campaign(
             item = {
                 "firm": "Unknown firm",
                 "email": firm.get("email"),
+                "city": city,
                 "reason": "Missing firm name",
                 "outcome": "skipped_other",
             }
             skipped_other.append(item)
             details.append(item)
+            campaign_log_firm_action("Unknown firm", firm.get("email"), city, "skipped", "Missing firm name")
             continue
-
-        existing_firm = db.query(models.Firm).filter(
-            models.Firm.firm_name == firm_name
-        ).first()
 
         firm_data = schemas.FirmCreate(
             firm_name=firm_name,
@@ -1193,10 +1249,80 @@ def run_campaign(
             status="Not Contacted"
         )
 
-        saved_firm = crud.create_firm(db, firm_data)
+        existing_firm = find_existing_campaign_firm(db, firm_data)
+        if existing_firm:
+            saved_firm = existing_firm
+            existing_count += 1
+            item = campaign_firm_item(saved_firm, "Existing duplicate reused", outcome="skipped_duplicate")
+            skipped_duplicate.append(item)
+            details.append(item)
+            campaign_log_firm_action(firm_name, firm_data.email, city, "existing", "Existing duplicate reused")
+        else:
+            try:
+                saved_firm = crud.create_firm(db, firm_data)
+            except crud.DuplicateFirmError as exc:
+                db.rollback()
+                saved_firm = exc.existing_firm or find_existing_campaign_firm(db, firm_data)
+                if saved_firm:
+                    existing_count += 1
+                    item = campaign_firm_item(saved_firm, "Existing duplicate reused after insert conflict", outcome="skipped_duplicate")
+                    skipped_duplicate.append(item)
+                    details.append(item)
+                    campaign_log_firm_action(firm_name, firm_data.email, city, "existing", "Existing duplicate reused after insert conflict")
+                else:
+                    item = {
+                        "firm": firm_name,
+                        "email": firm_data.email,
+                        "city": city,
+                        "reason": str(exc),
+                        "error": str(exc),
+                        "outcome": "skipped_other",
+                    }
+                    skipped_other.append(item)
+                    details.append(item)
+                    campaign_log_firm_action(firm_name, firm_data.email, city, "failed", str(exc))
+                    continue
+            except IntegrityError as exc:
+                db.rollback()
+                saved_firm = find_existing_campaign_firm(db, firm_data)
+                if saved_firm:
+                    existing_count += 1
+                    item = campaign_firm_item(saved_firm, "Existing duplicate reused after database conflict", outcome="skipped_duplicate")
+                    skipped_duplicate.append(item)
+                    details.append(item)
+                    campaign_log_firm_action(firm_name, firm_data.email, city, "existing", "Existing duplicate reused after database conflict")
+                else:
+                    failure_reason = str(getattr(exc, "orig", exc))
+                    item = {
+                        "firm": firm_name,
+                        "email": firm_data.email,
+                        "city": city,
+                        "reason": "Database conflict while saving firm",
+                        "error": failure_reason,
+                        "outcome": "skipped_other",
+                    }
+                    skipped_other.append(item)
+                    details.append(item)
+                    campaign_log_firm_action(firm_name, firm_data.email, city, "failed", failure_reason)
+                    continue
+            except Exception as exc:
+                db.rollback()
+                failure_reason = str(exc)
+                item = {
+                    "firm": firm_name,
+                    "email": firm_data.email,
+                    "city": city,
+                    "reason": "Could not save firm",
+                    "error": failure_reason,
+                    "outcome": "skipped_other",
+                }
+                skipped_other.append(item)
+                details.append(item)
+                campaign_log_firm_action(firm_name, firm_data.email, city, "failed", failure_reason)
+                continue
 
-        if not existing_firm:
             saved_count += 1
+            campaign_log_firm_action(firm_name, firm_data.email, city, "saved")
 
         saved_firms.append(saved_firm)
 
@@ -1207,12 +1333,14 @@ def run_campaign(
             item = campaign_firm_item(firm, "No email found", outcome="skipped_no_email")
             skipped_no_email.append(item)
             details.append(item)
+            campaign_log_firm_action(firm.firm_name, firm.email, firm.city, "skipped", "No email found")
             continue
 
         if firm.status in CONTACTED_STATUSES or has_sent_email_log(db, firm.id):
             item = campaign_firm_item(firm, "Already contacted or Email Sent", outcome="skipped_already_contacted")
             skipped_already_contacted.append(item)
             details.append(item)
+            campaign_log_firm_action(firm.firm_name, firm.email, firm.city, "skipped", "Already contacted or Email Sent")
             continue
 
         eligible_firms.append(firm)
@@ -1226,10 +1354,12 @@ def run_campaign(
             item = campaign_firm_item(firm, "Campaign limit reached", outcome="skipped_other")
             skipped_other.append(item)
             details.append(item)
+            campaign_log_firm_action(firm.firm_name, firm.email, firm.city, "skipped", "Campaign limit reached")
 
     if not send_immediately:
         for firm in eligible_firms:
             details.append(campaign_firm_item(firm, "Eligible for outreach", outcome="eligible"))
+            campaign_log_firm_action(firm.firm_name, firm.email, firm.city, "skipped", "Eligible for outreach preview only")
 
     if send_immediately:
         for index, firm in enumerate(firms_to_send):
@@ -1276,34 +1406,46 @@ def run_campaign(
                 item = campaign_firm_item(firm, "Email sent", outcome="sent")
                 sent.append(item)
                 details.append(item)
+                campaign_log_firm_action(firm.firm_name, firm.email, firm.city, "sent")
 
             except Exception as e:
+                db.rollback()
                 failure_reason = email_failure_reason(e)
-                log = models.EmailLog(
-                    firm_id=firm.id,
-                    firm_name=firm.firm_name,
-                    email=firm.email,
-                    subject=subject,
-                    status="Failed",
-                    error_message=failure_reason,
-                    sent_at=utc_now()
-                )
+                try:
+                    log = models.EmailLog(
+                        firm_id=firm.id,
+                        firm_name=firm.firm_name,
+                        email=firm.email,
+                        subject=subject,
+                        status="Failed",
+                        error_message=failure_reason,
+                        sent_at=utc_now()
+                    )
 
-                db.add(log)
-                write_audit_log(
-                    db,
-                    "campaign.email_failed",
-                    actor=current_user,
-                    request=request,
-                    target_type="firm",
-                    target_id=firm.id,
-                    details={"email": firm.email, "subject": subject, "source": "run_campaign", "error": failure_reason},
-                )
-                db.commit()
+                    db.add(log)
+                    write_audit_log(
+                        db,
+                        "campaign.email_failed",
+                        actor=current_user,
+                        request=request,
+                        target_type="firm",
+                        target_id=firm.id,
+                        details={"email": firm.email, "subject": subject, "source": "run_campaign", "error": failure_reason},
+                    )
+                    db.commit()
+                except Exception:
+                    db.rollback()
+                    logger.exception(
+                        "Could not log campaign email failure firm_name=%s email=%s city=%s",
+                        firm.firm_name,
+                        firm.email,
+                        firm.city,
+                    )
 
                 item = campaign_firm_item(firm, "Email send failed", error=failure_reason, outcome="failed")
                 failed.append(item)
                 details.append(item)
+                campaign_log_firm_action(firm.firm_name, firm.email, firm.city, "failed", failure_reason)
 
             if index < len(firms_to_send) - 1 and safe_delay_seconds > 0:
                 time.sleep(safe_delay_seconds)
@@ -1311,17 +1453,20 @@ def run_campaign(
     return {
         "searched_count": len(results),
         "saved_count": saved_count,
+        "existing_count": existing_count,
         "eligible_count": len(eligible_firms),
         "sent_count": len(sent),
         "failed_count": len(failed),
+        "skipped_duplicate": len(skipped_duplicate),
         "skipped_no_email": len(skipped_no_email),
         "skipped_already_contacted": len(skipped_already_contacted),
         "skipped_other": len(skipped_other),
-        "skipped_count": len(skipped_no_email) + len(skipped_already_contacted) + len(skipped_other),
+        "skipped_count": len(skipped_duplicate) + len(skipped_no_email) + len(skipped_already_contacted) + len(skipped_other),
         "send_immediately": send_immediately,
         "sent": sent,
         "failed": failed,
-        "skipped": [*skipped_no_email, *skipped_already_contacted, *skipped_other],
+        "skipped": [*skipped_duplicate, *skipped_no_email, *skipped_already_contacted, *skipped_other],
+        "skipped_duplicate_details": skipped_duplicate,
         "skipped_no_email_details": skipped_no_email,
         "skipped_already_contacted_details": skipped_already_contacted,
         "skipped_other_details": skipped_other,
