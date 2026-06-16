@@ -130,27 +130,37 @@ def send_email(to_email, subject, body):
 
     try:
         log_smtp_config_status()
+        logger.info("Attempting SMTP connection")
         with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=SMTP_TIMEOUT_SECONDS) as server:
             server.starttls()
+            logger.info("SMTP TLS established")
 
             try:
                 server.login(gmail_address, gmail_password)
+                logger.info("SMTP login successful")
             except smtplib.SMTPAuthenticationError as exc:
                 raise EmailSendError(SMTP_CONFIGURATION_ERROR) from exc
 
+            logger.info("Sending email to %s", to_email)
             server.send_message(msg)
+            logger.info("Email sent successfully")
     except EmailSendError:
+        logger.exception("SMTP send failed")
         raise
     except smtplib.SMTPConnectError as exc:
+        logger.exception("SMTP send failed")
         raise EmailSendError(SMTP_CONFIGURATION_ERROR) from exc
     except smtplib.SMTPServerDisconnected as exc:
+        logger.exception("SMTP send failed")
         raise EmailSendError(SMTP_CONFIGURATION_ERROR) from exc
     except smtplib.SMTPException as exc:
-        logger.exception("SMTP send failed: %s", safe_email_error_message(exc))
+        logger.exception("SMTP send failed")
         raise EmailSendError(SMTP_CONFIGURATION_ERROR) from exc
     except (TimeoutError, OSError) as exc:
+        logger.exception("SMTP send failed")
         raise EmailSendError(SMTP_CONFIGURATION_ERROR) from exc
     except Exception as exc:
+        logger.exception("SMTP send failed")
         raise EmailSendError(f"Email send failed: {safe_email_error_message(exc)}") from exc
 
     return True
