@@ -530,17 +530,79 @@ function setActionButtonsForMode() {
   applyRoleVisibility();
 }
 
-async function fetchJson(path, options = {}) {
+function buildApiUrl(path) {
+  return path.startsWith("http") ? path : `${API_BASE}${path}`;
+}
+
+function formatApiErrorBody(body) {
+  if (!body) return "";
+
+  if (typeof body === "string") {
+    return body;
+  }
+
+  const detail = body.detail || body.message || body.error;
+
+  if (Array.isArray(detail)) {
+    return detail
+      .map((item) => {
+        const location = Array.isArray(item.loc) ? item.loc.join(".") : "";
+        const message = item.msg || JSON.stringify(item);
+        return location ? `${location}: ${message}` : message;
+      })
+      .join("; ");
+  }
+
+  if (detail && typeof detail === "object") {
+    return JSON.stringify(detail);
+  }
+
+  return detail || JSON.stringify(body);
+}
+
+function getApiErrorMessage(error, fallback = "Request failed.") {
+  return error?.message || fallback;
+}
+
+async function apiFetch(path, options = {}) {
   const headers = new Headers(options.headers || {});
+  const body = options.body;
 
   if (authToken && !headers.has("Authorization")) {
     headers.set("Authorization", `Bearer ${authToken}`);
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers
-  });
+  if (body && !(body instanceof FormData) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const url = buildApiUrl(path);
+  console.log("API request URL:", url);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers
+    });
+  } catch (error) {
+    console.error("API fetch failed:", error);
+    throw new Error(error.message || "Network request failed.");
+  }
+
+  console.log("API response status:", response.status);
+
+  const responseText = await response.text();
+  console.log("API response body:", responseText);
+
+  let responseBody = null;
+  if (responseText) {
+    try {
+      responseBody = JSON.parse(responseText);
+    } catch (error) {
+      responseBody = responseText;
+    }
+  }
 
   if (response.status === 401) {
     clearAuth();
@@ -548,23 +610,19 @@ async function fetchJson(path, options = {}) {
   }
 
   if (!response.ok) {
-    let message = `API request failed: ${response.status}`;
-
-    if (response.status === 403) {
-      message = "You do not have permission to perform this action.";
-    }
-
-    try {
-      const errorData = await response.json();
-      message = response.status === 403 ? message : errorData.detail || errorData.message || message;
-    } catch (error) {
-      // Keep the HTTP status fallback when the response is not JSON.
-    }
-
-    throw new Error(message);
+    const backendMessage = formatApiErrorBody(responseBody);
+    const fallbackMessage = `API request failed: ${response.status}`;
+    const error = new Error(backendMessage || fallbackMessage);
+    error.status = response.status;
+    error.body = responseBody;
+    throw error;
   }
 
-  return response.json();
+  return responseBody;
+}
+
+async function fetchJson(path, options = {}) {
+  return apiFetch(path, options);
 }
 
 function getDemoGeneratedEmail(firm) {
@@ -1518,7 +1576,7 @@ async function updateFirmStatus(firmId, status) {
     await loadDashboard();
     showCrmStatusMessage("Status updated.", "success");
   } catch (error) {
-    showCrmStatusMessage("Unable to update status. Please refresh and try again.", "error");
+    showCrmStatusMessage(getApiErrorMessage(error, "Unable to update status. Please refresh and try again."), "error");
     setBackendUnavailableStatus();
     await loadDashboard();
   }
@@ -1576,7 +1634,7 @@ async function saveAutoFollowUpSettings() {
     }
   } catch (error) {
     if (result) {
-      result.textContent = "Unable to save automatic follow-up settings.";
+      result.textContent = getApiErrorMessage(error, "Unable to save automatic follow-up settings.");
       result.className = "auto-follow-up-result error";
     }
   }
@@ -1612,7 +1670,7 @@ async function runAutoFollowUps() {
     await loadDashboard();
   } catch (error) {
     if (result) {
-      result.textContent = "Automatic follow-up run failed. Make sure backend is running.";
+      result.textContent = getApiErrorMessage(error, "Automatic follow-up run failed. Make sure backend is running.");
       result.className = "auto-follow-up-result error";
     }
     setBackendUnavailableStatus();
@@ -1655,7 +1713,7 @@ async function checkReplies() {
     }
   } catch (error) {
     if (message) {
-      message.textContent = `Unable to check reply tracking. ${getBackendUnavailableMessage()}`;
+      message.textContent = getApiErrorMessage(error, `Unable to check reply tracking. ${getBackendUnavailableMessage()}`);
       message.className = "reply-status error";
     }
     setBackendUnavailableStatus();
@@ -1791,7 +1849,7 @@ async function searchAndSaveFirms() {
     if (message) message.textContent = `Saved/loaded ${data.length} firms.`;
     await loadDashboard();
   } catch (error) {
-    if (message) message.textContent = "Search failed. Make sure backend is running.";
+    if (message) message.textContent = getApiErrorMessage(error, "Search failed. Make sure backend is running.");
     setBackendUnavailableStatus();
   }
 }
@@ -1878,7 +1936,7 @@ async function previewNewsletter() {
     if (preview) preview.hidden = false;
     showNewsletterMessage("Newsletter preview ready.", "success");
   } catch (error) {
-    showNewsletterMessage("Unable to preview newsletter. Make sure backend is running.", "error");
+    showNewsletterMessage(getApiErrorMessage(error, "Unable to preview newsletter. Make sure backend is running."), "error");
     setBackendUnavailableStatus();
   }
 }
@@ -1908,7 +1966,7 @@ async function saveNewsletterDraft() {
 
     showNewsletterMessage(data.message || "Newsletter draft saved.", "success");
   } catch (error) {
-    showNewsletterMessage("Unable to save newsletter draft. Make sure backend is running.", "error");
+    showNewsletterMessage(getApiErrorMessage(error, "Unable to save newsletter draft. Make sure backend is running."), "error");
     setBackendUnavailableStatus();
   }
 }
@@ -1948,7 +2006,7 @@ async function sendNewsletter() {
     showNewsletterMessage(data.message || "Newsletter send complete.", data.failed_count ? "error" : "success");
     await loadDashboard();
   } catch (error) {
-    showNewsletterMessage("Newsletter send failed. Make sure backend is running and Gmail settings are configured.", "error");
+    showNewsletterMessage(getApiErrorMessage(error, "Newsletter send failed. Make sure backend is running and Gmail settings are configured."), "error");
     setBackendUnavailableStatus();
   } finally {
     if (button) {
@@ -2015,7 +2073,7 @@ async function addManualProspect() {
     await loadDashboard();
   } catch (error) {
     if (message) {
-      message.textContent = "Unable to add prospect. Please try again.";
+      message.textContent = getApiErrorMessage(error, "Unable to add prospect. Please try again.");
       message.className = "inline-feedback error";
     }
   } finally {
@@ -2084,7 +2142,7 @@ async function importExcelDatabase() {
     await loadDashboard();
   } catch (error) {
     if (message) {
-      message.textContent = "Import failed. Please check the file and try again.";
+      message.textContent = getApiErrorMessage(error, "Import failed. Please check the file and try again.");
       message.className = "inline-feedback error";
     }
   } finally {
@@ -2110,7 +2168,7 @@ async function sendOutreach(firmId) {
     alert(data.message || data.error || "Request complete.");
     await loadDashboard();
   } catch (error) {
-    alert("Failed to send email. Check backend.");
+    alert(getApiErrorMessage(error, "Failed to send email. Check backend."));
     setBackendUnavailableStatus();
   }
 }
@@ -2139,7 +2197,7 @@ async function sendBatchOutreach() {
     if (message) message.textContent = `Sent: ${data.sent_count}, Failed: ${data.failed_count}`;
     await loadDashboard();
   } catch (error) {
-    if (message) message.textContent = "Batch sending failed. Check backend.";
+    if (message) message.textContent = getApiErrorMessage(error, "Batch sending failed. Check backend.");
     setBackendUnavailableStatus();
   }
 }
@@ -2236,7 +2294,7 @@ async function sendFollowUp(firmId) {
     }
   } catch (error) {
     if (message) {
-      message.textContent = "Follow-up failed. Make sure backend is running.";
+      message.textContent = getApiErrorMessage(error, "Follow-up failed. Make sure backend is running.");
       message.className = "inline-feedback error";
     }
     setBackendUnavailableStatus();
@@ -2274,8 +2332,8 @@ async function previewLetter(firmId) {
     }
   } catch (error) {
     setText("previewSubject", "Preview unavailable");
-    writeFrame("previewBodyFrame", emailHtmlFromText("Unable to generate preview. Make sure backend is running."));
-    if (previewMessage) previewMessage.textContent = "Preview failed. Check backend.";
+    writeFrame("previewBodyFrame", emailHtmlFromText(getApiErrorMessage(error, "Unable to generate preview. Make sure backend is running.")));
+    if (previewMessage) previewMessage.textContent = getApiErrorMessage(error, "Preview failed. Check backend.");
     setBackendUnavailableStatus();
   }
 }
@@ -2326,7 +2384,7 @@ async function saveTemplate() {
     renderTemplate(template);
     if (message) message.textContent = "Template saved.";
   } catch (error) {
-    if (message) message.textContent = "Template save failed. Check backend.";
+    if (message) message.textContent = getApiErrorMessage(error, "Template save failed. Check backend.");
     setBackendUnavailableStatus();
   }
 }
@@ -2351,7 +2409,7 @@ async function activateTemplate() {
     renderTemplate(template);
     if (message) message.textContent = "Template activated.";
   } catch (error) {
-    if (message) message.textContent = "Template activation failed. Check backend.";
+    if (message) message.textContent = getApiErrorMessage(error, "Template activation failed. Check backend.");
     setBackendUnavailableStatus();
   }
 }

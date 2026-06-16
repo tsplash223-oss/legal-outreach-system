@@ -65,6 +65,7 @@ app = FastAPI(title="Prospective Client Outreach System API")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,6 +74,16 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(firms.router)
 app.include_router(newsletters.router)
+
+
+@app.on_event("startup")
+async def print_cors_origins():
+    cors_message = (
+        "CORS allowed origins: "
+        f"{allowed_origins}; allow_origin_regex=https://.*\\.vercel\\.app"
+    )
+    print(cors_message)
+    logger.info(cors_message)
 
 
 @app.middleware("http")
