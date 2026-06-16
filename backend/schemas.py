@@ -24,6 +24,30 @@ class FirmBase(BaseModel):
     email: str | None = None
     status: str = "Not Contacted"
 
+    @field_validator("firm_name")
+    @classmethod
+    def validate_firm_name(cls, value: str):
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("Company name is required")
+        return cleaned
+
+    @field_validator("practice_area", "city", "phone", "website", "email", mode="before")
+    @classmethod
+    def normalize_optional_text(cls, value):
+        if value is None:
+            return None
+
+        cleaned = str(value).strip()
+        return cleaned or None
+
+    @field_validator("email")
+    @classmethod
+    def validate_firm_email(cls, value: str | None):
+        if value is not None and "@" not in value:
+            raise ValueError("Valid email is required")
+        return value
+
     @field_validator("status")
     @classmethod
     def validate_status(cls, value: str):

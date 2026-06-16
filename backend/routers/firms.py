@@ -1,4 +1,5 @@
 import json
+import logging
 import shutil
 import time
 from datetime import datetime, timedelta
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 import crud
@@ -20,6 +22,7 @@ from services.email_generator import DEFAULT_BODY_TEXT, DEFAULT_SUBJECT, generat
 from services.email_sender import check_smtp_config, safe_email_error_message, send_email
 from services.gmail_reply_tracker import check_gmail_replies
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["firms"], dependencies=[Depends(get_current_user)])
 
 FOLLOW_UP_SUBJECT = "Follow-Up - Green Light Drivers Ed & DUI School LLC"
@@ -94,27 +97,26 @@ def save_auto_follow_up_settings(settings: dict):
 
 
 def ensure_follow_up_columns(db: Session):
-    if not IS_SQLITE:
-        return
+    try:
+        columns = {column["name"] for column in inspect(db.bind).get_columns("firms")}
 
-    columns = {
-        row[1]
-        for row in db.execute(text("PRAGMA table_info(firms)")).fetchall()
-    }
+        if "last_contacted" not in columns:
+            db.execute(text("ALTER TABLE firms ADD COLUMN last_contacted TIMESTAMP"))
 
-    if "last_contacted" not in columns:
-        db.execute(text("ALTER TABLE firms ADD COLUMN last_contacted DATETIME"))
+        if "follow_up_count" not in columns:
+            db.execute(text("ALTER TABLE firms ADD COLUMN follow_up_count INTEGER DEFAULT 0"))
 
-    if "follow_up_count" not in columns:
-        db.execute(text("ALTER TABLE firms ADD COLUMN follow_up_count INTEGER DEFAULT 0"))
+        if "last_follow_up_date" not in columns:
+            db.execute(text("ALTER TABLE firms ADD COLUMN last_follow_up_date TIMESTAMP"))
 
-    if "last_follow_up_date" not in columns:
-        db.execute(text("ALTER TABLE firms ADD COLUMN last_follow_up_date DATETIME"))
+        if "notes" not in columns:
+            db.execute(text("ALTER TABLE firms ADD COLUMN notes TEXT"))
 
-    if "notes" not in columns:
-        db.execute(text("ALTER TABLE firms ADD COLUMN notes TEXT"))
-
-    db.commit()
+        db.commit()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception("Database error while ensuring firm follow-up columns.")
+        raise HTTPException(status_code=500, detail="Could not prepare firms table. Check backend logs for details.") from exc
 
 
 def get_db():
@@ -321,13 +323,71 @@ def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None,
     body = follow_up_email_body(firm.firm_name)
     sent_at = utc_now()
 
+    if not follow_up_type:
+        return {
+            "success": False,
+            "firm_id": firm.id,
+            "firm_name": firm.firm_name,
+            "email": firm.email,
+            "follow_up_type": None,
+            "error": "This prospect has already received the maximum number of follow-ups.",
+        }
+
     try:
         send_email(
             to_email=firm.email,
             subject=FOLLOW_UP_SUBJECT,
             body=body
         )
+    except Exception as exc:
+        failure_reason = email_failure_reason(exc)
+        logger.exception(
+            "Email send failed for follow-up firm_id=%s email=%s follow_up_type=%s",
+            firm.id,
+            firm.email,
+            follow_up_type,
+        )
 
+        try:
+            log = models.EmailLog(
+                firm_id=firm.id,
+                firm_name=firm.firm_name,
+                email=firm.email,
+                subject=f"{FOLLOW_UP_SUBJECT} ({follow_up_type})",
+                status="Failed",
+                error_message=failure_reason,
+                sent_at=utc_now()
+            )
+
+            db.add(log)
+            write_audit_log(
+                db,
+                "campaign.follow_up_failed",
+                actor=actor,
+                request=request,
+                target_type="firm",
+                target_id=firm.id,
+                details={"email": firm.email, "follow_up_type": follow_up_type, "error": failure_reason},
+            )
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception(
+                "Database error while logging failed follow-up firm_id=%s email=%s",
+                firm.id,
+                firm.email,
+            )
+
+        return {
+            "success": False,
+            "firm_id": firm.id,
+            "firm_name": firm.firm_name,
+            "email": firm.email,
+            "follow_up_type": follow_up_type,
+            "error": failure_reason,
+        }
+
+    try:
         log = models.EmailLog(
             firm_id=firm.id,
             firm_name=firm.firm_name,
@@ -364,38 +424,15 @@ def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None,
             "message": f"{follow_up_type} sent to {firm.firm_name}",
         }
 
-    except Exception as e:
-        failure_reason = email_failure_reason(e)
-        log = models.EmailLog(
-            firm_id=firm.id,
-            firm_name=firm.firm_name,
-            email=firm.email,
-            subject=f"{FOLLOW_UP_SUBJECT} ({follow_up_type})",
-            status="Failed",
-            error_message=failure_reason,
-            sent_at=utc_now()
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception(
+            "Database error while saving successful follow-up firm_id=%s email=%s follow_up_type=%s",
+            firm.id,
+            firm.email,
+            follow_up_type,
         )
-
-        db.add(log)
-        write_audit_log(
-            db,
-            "campaign.follow_up_failed",
-            actor=actor,
-            request=request,
-            target_type="firm",
-            target_id=firm.id,
-            details={"email": firm.email, "follow_up_type": follow_up_type, "error": failure_reason},
-        )
-        db.commit()
-
-        return {
-            "success": False,
-            "firm_id": firm.id,
-            "firm_name": firm.firm_name,
-            "email": firm.email,
-            "follow_up_type": follow_up_type,
-            "error": failure_reason,
-        }
+        raise HTTPException(status_code=500, detail="Follow-up was sent, but the result could not be saved.") from exc
 
 
 def deactivate_templates(db: Session):
@@ -538,10 +575,45 @@ def activate_email_template(
 @router.post("/firms/", response_model=schemas.FirmResponse)
 def add_firm(
     firm: schemas.FirmCreate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
-    return crud.create_firm(db, firm)
+    try:
+        logger.info(
+            "Adding prospect firm_name=%s email=%s actor=%s",
+            firm.firm_name,
+            firm.email,
+            current_user.email,
+        )
+        return crud.create_firm(db, firm)
+    except ValueError as exc:
+        db.rollback()
+        logger.warning(
+            "Invalid add prospect request from %s: %s payload=%s",
+            request.client.host if request.client else "unknown",
+            exc,
+            firm.model_dump(),
+        )
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception(
+            "Database error while adding prospect firm_name=%s email=%s actor=%s",
+            firm.firm_name,
+            firm.email,
+            current_user.email,
+        )
+        raise HTTPException(status_code=500, detail="Could not save prospect. Check backend logs for details.") from exc
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "Unexpected error while adding prospect firm_name=%s email=%s actor=%s",
+            firm.firm_name,
+            firm.email,
+            current_user.email,
+        )
+        raise HTTPException(status_code=500, detail="Could not save prospect. Check backend logs for details.") from exc
 
 
 @router.get("/firms/", response_model=list[schemas.FirmResponse])
@@ -1418,23 +1490,48 @@ def send_follow_up_email(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
-    firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
+    try:
+        firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
 
-    if not firm:
-        return {"success": False, "error": "Firm not found"}
+        if not firm:
+            raise HTTPException(status_code=404, detail="Firm not found")
 
-    if not firm.email:
-        return {"success": False, "error": "No email for this firm"}
+        if not firm.email:
+            raise HTTPException(status_code=400, detail="No email for this firm")
 
-    if not is_follow_up_eligible(firm, db):
-        return {"success": False, "error": "This prospect is not eligible for a follow-up yet."}
+        if not is_follow_up_eligible(firm, db):
+            raise HTTPException(status_code=400, detail="This prospect is not eligible for a follow-up yet.")
 
-    result = send_follow_up_for_firm(firm, db, actor=current_user, request=request)
+        logger.info(
+            "Sending follow-up firm_id=%s email=%s actor=%s",
+            firm.id,
+            firm.email,
+            current_user.email,
+        )
+        result = send_follow_up_for_firm(firm, db, actor=current_user, request=request)
 
-    if not result["success"]:
-        return {"success": False, "error": result["error"]}
+        if not result["success"]:
+            raise HTTPException(status_code=400, detail=result["error"])
 
-    return result
+        return result
+    except HTTPException:
+        raise
+    except SQLAlchemyError as exc:
+        db.rollback()
+        logger.exception(
+            "Database error while sending follow-up firm_id=%s actor=%s",
+            firm_id,
+            current_user.email,
+        )
+        raise HTTPException(status_code=500, detail="Could not send follow-up. Check backend logs for details.") from exc
+    except Exception as exc:
+        db.rollback()
+        logger.exception(
+            "Unexpected error while sending follow-up firm_id=%s actor=%s",
+            firm_id,
+            current_user.email,
+        )
+        raise HTTPException(status_code=500, detail="Could not send follow-up. Check backend logs for details.") from exc
 
 
 @router.post("/firms/send-batch-outreach/")
