@@ -1,12 +1,20 @@
 import os
 import logging
 import smtplib
+import base64
+import re
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 
 from dotenv import load_dotenv
+from services.gmail_reply_tracker import (
+    CREDENTIALS_PATH,
+    TOKEN_PATH,
+    ensure_gmail_api_files_from_env,
+    import_gmail_dependencies,
+)
 
 load_dotenv()
 
@@ -16,6 +24,11 @@ SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 SMTP_TIMEOUT_SECONDS = 30
 SMTP_CONFIGURATION_ERROR = "SMTP connection failed. Check Gmail app password and Railway environment variables."
+GMAIL_SEND_SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
+GMAIL_API_CONFIGURATION_ERROR = (
+    "Gmail API send failed. Check Gmail API credentials/token and Railway environment variables."
+)
+GMAIL_API_SCOPE_ERROR = "Gmail API token is missing gmail.send scope. Regenerate token.json with Gmail send permission."
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +71,10 @@ class EmailSendError(Exception):
     pass
 
 
+class GmailApiNotConfigured(Exception):
+    pass
+
+
 def safe_email_error_message(error):
     message = str(error) or error.__class__.__name__
     gmail_address, gmail_password = get_smtp_credentials()
@@ -87,6 +104,110 @@ def check_smtp_config():
     }
 
 
+def is_gmail_api_send_configured():
+    errors = ensure_gmail_api_files_from_env()
+    return not errors and CREDENTIALS_PATH.exists() and TOKEN_PATH.exists()
+
+
+def html_to_plain_text(html):
+    if not html:
+        return ""
+
+    text = str(html)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</p\s*>", "\n\n", text)
+    text = re.sub(r"<[^>]+>", "", text)
+    return text.strip()
+
+
+def build_email_message(sender_email, to_email, subject, html_body, plain_text_body=None):
+    msg = MIMEMultipart("related")
+    msg["Subject"] = subject
+    msg["From"] = sender_email
+    msg["To"] = to_email
+
+    alternative = MIMEMultipart("alternative")
+    fallback_text = plain_text_body or html_to_plain_text(html_body)
+    if fallback_text:
+        alternative.attach(MIMEText(fallback_text, "plain", "utf-8"))
+    alternative.attach(MIMEText(html_body, "html", "utf-8"))
+    msg.attach(alternative)
+
+    signature_path = Path(__file__).resolve().parent.parent / "signature.png.png"
+
+    if signature_path.exists():
+        with open(signature_path, "rb") as img_file:
+            img = MIMEImage(img_file.read())
+            img.add_header("Content-ID", "<signature_image>")
+            img.add_header("Content-Disposition", "inline")
+            img.add_header("X-Attachment-Id", "signature_image")
+            msg.attach(img)
+
+    return msg
+
+
+def get_gmail_send_service():
+    if not is_gmail_api_send_configured():
+        raise GmailApiNotConfigured("Gmail API credentials/token are not configured.")
+
+    deps, error = import_gmail_dependencies()
+    if error:
+        raise EmailSendError(GMAIL_API_CONFIGURATION_ERROR)
+
+    Credentials = deps["Credentials"]
+    InstalledAppFlow = deps["InstalledAppFlow"]
+    Request = deps["Request"]
+    build = deps["build"]
+
+    try:
+        credentials = Credentials.from_authorized_user_file(str(TOKEN_PATH), GMAIL_SEND_SCOPES)
+        granted_scopes = set(credentials.granted_scopes or credentials.scopes or [])
+        if granted_scopes and GMAIL_SEND_SCOPES[0] not in granted_scopes:
+            raise EmailSendError(GMAIL_API_SCOPE_ERROR)
+
+        if not credentials or not credentials.valid:
+            if credentials and credentials.expired and credentials.refresh_token:
+                credentials.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), GMAIL_SEND_SCOPES)
+                credentials = flow.run_local_server(port=0)
+
+            TOKEN_PATH.write_text(credentials.to_json(), encoding="utf-8")
+
+        return build("gmail", "v1", credentials=credentials)
+    except EmailSendError:
+        raise
+    except Exception as exc:
+        logger.exception("Gmail API send setup failed")
+        raise EmailSendError(GMAIL_API_CONFIGURATION_ERROR) from exc
+
+
+def get_gmail_profile_email(service):
+    try:
+        profile = service.users().getProfile(userId="me").execute()
+        return profile.get("emailAddress", "")
+    except Exception:
+        logger.exception("Could not read Gmail API profile email")
+        return ""
+
+
+def send_email_with_gmail_api(service, message):
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+
+    try:
+        result = service.users().messages().send(
+            userId="me",
+            body={"raw": raw_message},
+        ).execute()
+    except Exception as exc:
+        logger.exception("Gmail API send failed")
+        raise EmailSendError(GMAIL_API_CONFIGURATION_ERROR) from exc
+
+    message_id = result.get("id")
+    logger.info("Gmail API email sent successfully message_id=%s", message_id)
+    return result
+
+
 def log_smtp_config_status():
     config = check_smtp_config()
 
@@ -102,31 +223,25 @@ def log_smtp_config_status():
     )
 
 
-def send_email(to_email, subject, body):
+def send_email(to_email, subject, body, plain_text_body=None):
     gmail_address, gmail_password = get_smtp_credentials()
+
+    if is_gmail_api_send_configured():
+        service = get_gmail_send_service()
+        sender_email = gmail_address or get_gmail_profile_email(service)
+        if not sender_email:
+            raise EmailSendError(GMAIL_API_CONFIGURATION_ERROR)
+
+        msg = build_email_message(sender_email, to_email, subject, body, plain_text_body=plain_text_body)
+        logger.info("Sending email with Gmail API to %s", to_email)
+        send_email_with_gmail_api(service, msg)
+        return True
 
     if not gmail_address or not gmail_password:
         log_smtp_config_status()
         raise EmailSendError(SMTP_CONFIGURATION_ERROR)
 
-    msg = MIMEMultipart("related")
-    msg["Subject"] = subject
-    msg["From"] = gmail_address
-    msg["To"] = to_email
-
-    alternative = MIMEMultipart("alternative")
-    alternative.attach(MIMEText(body, "html", "utf-8"))
-    msg.attach(alternative)
-
-    signature_path = Path(__file__).resolve().parent.parent / "signature.png.png"
-
-    if signature_path.exists():
-        with open(signature_path, "rb") as img_file:
-            img = MIMEImage(img_file.read())
-            img.add_header("Content-ID", "<signature_image>")
-            img.add_header("Content-Disposition", "inline")
-            img.add_header("X-Attachment-Id", "signature_image")
-            msg.attach(img)
+    msg = build_email_message(gmail_address, to_email, subject, body, plain_text_body=plain_text_body)
 
     try:
         log_smtp_config_status()
