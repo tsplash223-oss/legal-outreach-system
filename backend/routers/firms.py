@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 
-from fastapi import APIRouter, Body, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Request, UploadFile
 from sqlalchemy import func, inspect, text
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -129,6 +129,10 @@ def get_db():
         db.close()
 
 
+def firm_query_for_profile(db: Session, business_profile):
+    return db.query(models.Firm).filter(models.Firm.business_profile_id == business_profile.id)
+
+
 def utc_now():
     return datetime.utcnow()
 
@@ -226,20 +230,23 @@ def days_since(value):
     return max(0, (utc_now() - value).days)
 
 
-def latest_sent_log_date(db: Session, firm_id: int):
-    latest_log = db.query(models.EmailLog).filter(
+def latest_sent_log_date(db: Session, firm_id: int, business_profile_id: int | None = None):
+    query = db.query(models.EmailLog).filter(
         models.EmailLog.firm_id == firm_id,
-        models.EmailLog.status == "Sent"
-    ).order_by(models.EmailLog.sent_at.desc()).first()
+        models.EmailLog.status == "Sent",
+    )
+    if business_profile_id is not None:
+        query = query.filter(models.EmailLog.business_profile_id == business_profile_id)
+
+    latest_log = query.order_by(models.EmailLog.sent_at.desc()).first()
 
     return latest_log.sent_at if latest_log else None
-
 
 def follow_up_reference_date(firm, db: Session):
     follow_up_count = firm.follow_up_count or 0
 
     if follow_up_count == 0:
-        return firm.last_contacted or latest_sent_log_date(db, firm.id)
+        return firm.last_contacted or latest_sent_log_date(db, firm.id, firm.business_profile_id)
 
     return firm.last_follow_up_date
 
@@ -536,9 +543,13 @@ def update_email_template(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role("admin")),
 ):
+    selected_profile_id = template.business_profile_id
     db_template = db.query(models.EmailTemplate).filter(models.EmailTemplate.id == template_id).first()
 
     if not db_template:
+        raise HTTPException(status_code=404, detail="Email template not found")
+
+    if selected_profile_id and db_template.business_profile_id != selected_profile_id:
         raise HTTPException(status_code=404, detail="Email template not found")
 
     updates = template.model_dump(exclude_unset=True)
@@ -570,12 +581,14 @@ def update_email_template(
 def activate_email_template(
     template_id: int,
     request: Request,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role("admin")),
 ):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
     db_template = db.query(models.EmailTemplate).filter(models.EmailTemplate.id == template_id).first()
 
-    if not db_template:
+    if not db_template or db_template.business_profile_id != business_profile.id:
         raise HTTPException(status_code=404, detail="Email template not found")
 
     deactivate_templates(db, db_template.business_profile_id)
@@ -598,9 +611,13 @@ def activate_email_template(
 def add_firm(
     firm: schemas.FirmCreate,
     request: Request,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
+    business_profile = get_business_profile_or_default(db, business_profile_id or firm.business_profile_id)
+    firm.business_profile_id = business_profile.id
+
     try:
         logger.info(
             "Adding prospect firm_name=%s email=%s actor=%s",
@@ -660,18 +677,21 @@ def add_firm(
 
 
 @router.get("/firms/", response_model=list[schemas.FirmResponse])
-def list_firms(db: Session = Depends(get_db)):
-    return crud.get_firms(db)
+def list_firms(business_profile_id: int | None = None, db: Session = Depends(get_db)):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    return crud.get_firms(db, business_profile.id)
 
 
 @router.put("/firms/{firm_id}/status", response_model=schemas.FirmResponse)
 def update_firm_status(
     firm_id: int,
     status_update: schemas.FirmStatusUpdate,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
+    business_profile = get_business_profile_or_default(db, business_profile_id or status_update.business_profile_id)
+    firm = firm_query_for_profile(db, business_profile).filter(models.Firm.id == firm_id).first()
 
     if not firm:
         raise HTTPException(status_code=404, detail="Firm not found")
@@ -687,10 +707,12 @@ def update_firm_status(
 def update_firm_notes(
     firm_id: int,
     notes_update: schemas.FirmNotesUpdate,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
+    business_profile = get_business_profile_or_default(db, business_profile_id or notes_update.business_profile_id)
+    firm = firm_query_for_profile(db, business_profile).filter(models.Firm.id == firm_id).first()
 
     if not firm:
         raise HTTPException(status_code=404, detail="Firm not found")
@@ -760,9 +782,11 @@ def excel_row_item(row_number: int, row_data: dict, reason: str):
 @router.post("/firms/import-excel/")
 async def import_excel_firms(
     file: UploadFile = File(...),
+    business_profile_id: int | None = Form(None),
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
     filename = file.filename or ""
 
     if not filename.lower().endswith(".xlsx"):
@@ -813,7 +837,7 @@ async def import_excel_firms(
     expected_columns = ["firm_name", "email", "phone", "website", "city", "practice_area"]
     existing_emails = {
         email.lower()
-        for (email,) in db.query(models.Firm.email).filter(models.Firm.email.isnot(None)).all()
+        for (email,) in firm_query_for_profile(db, business_profile).filter(models.Firm.email.isnot(None)).all()
         if email
     }
 
@@ -845,6 +869,7 @@ async def import_excel_firms(
             continue
 
         db_firm = models.Firm(
+            business_profile_id=business_profile.id,
             firm_name=row_data["firm_name"] or email,
             email=email,
             phone=row_data["phone"],
@@ -870,15 +895,15 @@ async def import_excel_firms(
         "missing_email": missing_email,
     }
 
-
 @router.get("/firms/stats/")
 def get_firm_stats(business_profile_id: int | None = None, db: Session = Depends(get_db)):
-    total_firms = db.query(models.Firm).count()
-    firms_with_emails = db.query(models.Firm).filter(models.Firm.email.isnot(None)).count()
-    firms_without_emails = db.query(models.Firm).filter(models.Firm.email.is_(None)).count()
-    emails_sent = db.query(models.Firm).filter(models.Firm.status == "Email Sent").count()
-    not_contacted = db.query(models.Firm).filter(models.Firm.status == "Not Contacted").count()
     business_profile = get_business_profile_or_default(db, business_profile_id)
+    firms_query = firm_query_for_profile(db, business_profile)
+    total_firms = firms_query.count()
+    firms_with_emails = firms_query.filter(models.Firm.email.isnot(None)).count()
+    firms_without_emails = firms_query.filter(models.Firm.email.is_(None)).count()
+    emails_sent = firms_query.filter(models.Firm.status == "Email Sent").count()
+    not_contacted = firms_query.filter(models.Firm.status == "Not Contacted").count()
     log_query = db.query(models.EmailLog).filter(models.EmailLog.business_profile_id == business_profile.id)
     failed_logs = log_query.filter(models.EmailLog.status == "Failed").count()
     sent_logs = log_query.filter(models.EmailLog.status == "Sent").count()
@@ -897,7 +922,7 @@ def get_firm_stats(business_profile_id: int | None = None, db: Session = Depends
 @router.get("/firms/analytics/", response_model=schemas.FirmAnalyticsResponse)
 def get_firm_analytics(business_profile_id: int | None = None, db: Session = Depends(get_db)):
     business_profile = get_business_profile_or_default(db, business_profile_id)
-    firms = db.query(models.Firm).all()
+    firms = firm_query_for_profile(db, business_profile).all()
     sent_firm_ids = {
         firm_id
         for (firm_id,) in db.query(models.EmailLog.firm_id).filter(
@@ -1002,16 +1027,17 @@ def check_replies(
 
 
 @router.get("/firms/follow-ups/")
-def get_follow_ups(db: Session = Depends(get_db)):
-    firms = db.query(models.Firm).filter(models.Firm.email.isnot(None)).all()
+def get_follow_ups(business_profile_id: int | None = None, db: Session = Depends(get_db)):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    firms = firm_query_for_profile(db, business_profile).filter(models.Firm.email.isnot(None)).all()
     eligible_prospects = [
         follow_up_prospect_item(firm, db)
         for firm in firms
         if is_follow_up_eligible(firm, db)
     ]
     follow_ups_sent = sum(firm.follow_up_count or 0 for firm in firms)
-    replied_count = db.query(models.Firm).filter(models.Firm.status == "Replied").count()
-    contacted_count = db.query(models.Firm).filter(
+    replied_count = firm_query_for_profile(db, business_profile).filter(models.Firm.status == "Replied").count()
+    contacted_count = firm_query_for_profile(db, business_profile).filter(
         models.Firm.status.in_(["Email Sent", "Replied", "Interested", "Meeting Scheduled", "Partner", "Not Interested"])
     ).count()
     reply_rate = 0 if contacted_count == 0 else round((replied_count / contacted_count) * 100, 1)
@@ -1061,7 +1087,7 @@ def run_auto_follow_ups(
 
     eligible_firms = [
         firm
-        for firm in db.query(models.Firm).filter(models.Firm.email.isnot(None)).all()
+        for firm in firm_query_for_profile(db, business_profile).filter(models.Firm.email.isnot(None)).all()
         if is_follow_up_eligible(firm, db)
     ]
     daily_limit = settings["daily_limit"]
@@ -1117,9 +1143,11 @@ def search_and_save_firms(
     keyword: str,
     city: str,
     state: str,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
     try:
         results = search_law_firms(keyword, city, state)
     except GoogleMapsConfigurationError as exc:
@@ -1131,6 +1159,7 @@ def search_and_save_firms(
 
     for firm in results:
         firm_data = schemas.FirmCreate(
+            business_profile_id=business_profile.id,
             firm_name=firm.get("firm_name"),
             practice_area=keyword,
             city=city,
@@ -1146,7 +1175,7 @@ def search_and_save_firms(
         try:
             saved_firm = crud.create_firm(db, firm_data)
         except crud.DuplicateFirmError as exc:
-            saved_firm = exc.existing_firm or find_existing_campaign_firm(db, firm_data)
+            saved_firm = exc.existing_firm or find_existing_campaign_firm(db, firm_data, business_profile.id)
             if not saved_firm:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc
         saved_firms.append(saved_firm)
@@ -1186,16 +1215,20 @@ def campaign_log_firm_action(firm_name, email, city, action, reason=None):
     )
 
 
-def find_existing_campaign_firm(db: Session, firm_data: schemas.FirmCreate):
+def find_existing_campaign_firm(db: Session, firm_data: schemas.FirmCreate, business_profile_id: int):
     if firm_data.email:
         existing_by_email = db.query(models.Firm).filter(
+            models.Firm.business_profile_id == business_profile_id,
             func.lower(models.Firm.email) == firm_data.email.lower()
         ).first()
 
         if existing_by_email:
             return existing_by_email
 
-    query = db.query(models.Firm).filter(models.Firm.firm_name == firm_data.firm_name)
+    query = db.query(models.Firm).filter(
+        models.Firm.business_profile_id == business_profile_id,
+        models.Firm.firm_name == firm_data.firm_name,
+    )
 
     if firm_data.city:
         query = query.filter(func.lower(models.Firm.city) == firm_data.city.lower())
@@ -1209,21 +1242,27 @@ def find_existing_campaign_firm(db: Session, firm_data: schemas.FirmCreate):
 
     if firm_data.city:
         existing = db.query(models.Firm).filter(
+            models.Firm.business_profile_id == business_profile_id,
             models.Firm.firm_name == firm_data.firm_name,
             func.lower(models.Firm.city) == firm_data.city.lower(),
         ).first()
         if existing:
             return existing
 
-    return db.query(models.Firm).filter(models.Firm.firm_name == firm_data.firm_name).first()
+    return db.query(models.Firm).filter(
+        models.Firm.business_profile_id == business_profile_id,
+        models.Firm.firm_name == firm_data.firm_name,
+    ).first()
 
 
-def has_sent_email_log(db: Session, firm_id: int):
-    return db.query(models.EmailLog.id).filter(
+def has_sent_email_log(db: Session, firm_id: int, business_profile_id: int | None = None):
+    query = db.query(models.EmailLog.id).filter(
         models.EmailLog.firm_id == firm_id,
         models.EmailLog.status == "Sent"
-    ).first() is not None
-
+    )
+    if business_profile_id is not None:
+        query = query.filter(models.EmailLog.business_profile_id == business_profile_id)
+    return query.first() is not None
 
 @router.post("/firms/run-campaign/")
 def run_campaign(
@@ -1275,6 +1314,7 @@ def run_campaign(
             continue
 
         firm_data = schemas.FirmCreate(
+            business_profile_id=business_profile.id,
             firm_name=firm_name,
             practice_area=keyword,
             city=city,
@@ -1287,7 +1327,7 @@ def run_campaign(
             status="Not Contacted"
         )
 
-        existing_firm = find_existing_campaign_firm(db, firm_data)
+        existing_firm = find_existing_campaign_firm(db, firm_data, business_profile.id)
         if existing_firm:
             saved_firm = existing_firm
             existing_count += 1
@@ -1300,7 +1340,7 @@ def run_campaign(
                 saved_firm = crud.create_firm(db, firm_data)
             except crud.DuplicateFirmError as exc:
                 db.rollback()
-                saved_firm = exc.existing_firm or find_existing_campaign_firm(db, firm_data)
+                saved_firm = exc.existing_firm or find_existing_campaign_firm(db, firm_data, business_profile.id)
                 if saved_firm:
                     existing_count += 1
                     item = campaign_firm_item(saved_firm, "Existing duplicate reused after insert conflict", outcome="skipped_duplicate")
@@ -1322,7 +1362,7 @@ def run_campaign(
                     continue
             except IntegrityError as exc:
                 db.rollback()
-                saved_firm = find_existing_campaign_firm(db, firm_data)
+                saved_firm = find_existing_campaign_firm(db, firm_data, business_profile.id)
                 if saved_firm:
                     existing_count += 1
                     item = campaign_firm_item(saved_firm, "Existing duplicate reused after database conflict", outcome="skipped_duplicate")
@@ -1374,7 +1414,7 @@ def run_campaign(
             campaign_log_firm_action(firm.firm_name, firm.email, firm.city, "skipped", "No email found")
             continue
 
-        if firm.status in CONTACTED_STATUSES or has_sent_email_log(db, firm.id):
+        if firm.status in CONTACTED_STATUSES or has_sent_email_log(db, firm.id, business_profile.id):
             item = campaign_firm_item(firm, "Already contacted or Email Sent", outcome="skipped_already_contacted")
             skipped_already_contacted.append(item)
             details.append(item)
@@ -1523,8 +1563,8 @@ def generate_email_for_firm(
     business_profile_id: int | None = None,
     db: Session = Depends(get_db),
 ):
-    firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
     business_profile = get_business_profile_or_default(db, business_profile_id)
+    firm = firm_query_for_profile(db, business_profile).filter(models.Firm.id == firm_id).first()
 
     if not firm:
         return {"success": False, "error": "Firm not found"}
@@ -1546,8 +1586,8 @@ def send_test_email_for_firm(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
-    firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
     business_profile = get_business_profile_or_default(db, business_profile_id)
+    firm = firm_query_for_profile(db, business_profile).filter(models.Firm.id == firm_id).first()
 
     if not firm:
         return {"success": False, "error": "Firm not found"}
@@ -1610,8 +1650,8 @@ def send_outreach_email(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
-    firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
     business_profile = get_business_profile_or_default(db, business_profile_id)
+    firm = firm_query_for_profile(db, business_profile).filter(models.Firm.id == firm_id).first()
 
     if not firm:
         return {"success": False, "error": "Firm not found"}
@@ -1709,7 +1749,8 @@ def send_follow_up_email(
     current_user: models.User = Depends(require_min_role("manager")),
 ):
     try:
-        firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
+        business_profile = get_business_profile_or_default(db, business_profile_id)
+        firm = firm_query_for_profile(db, business_profile).filter(models.Firm.id == firm_id).first()
 
         if not firm:
             raise HTTPException(status_code=404, detail="Firm not found")
@@ -1726,7 +1767,6 @@ def send_follow_up_email(
             firm.email,
             current_user.email,
         )
-        business_profile = get_business_profile_or_default(db, business_profile_id)
         result = send_follow_up_for_firm(firm, db, actor=current_user, request=request, business_profile=business_profile)
 
         if not result["success"]:
@@ -1763,7 +1803,7 @@ def send_batch_outreach(
     current_user: models.User = Depends(require_min_role("manager")),
 ):
     business_profile = get_business_profile_or_default(db, business_profile_id)
-    firms = db.query(models.Firm).filter(
+    firms = firm_query_for_profile(db, business_profile).filter(
         models.Firm.email.isnot(None),
         models.Firm.status != "Email Sent"
     ).limit(limit).all()

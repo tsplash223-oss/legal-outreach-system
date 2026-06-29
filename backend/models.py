@@ -8,6 +8,8 @@ class Firm(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
+    business_profile_id = Column(Integer, ForeignKey("business_profiles.id"), nullable=True, index=True)
+
     firm_name = Column(String, index=True)
     practice_area = Column(String)
 
@@ -141,6 +143,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
+    business_profile_id = Column(Integer, ForeignKey("business_profiles.id"), nullable=True, index=True)
     event_type = Column(String, index=True, nullable=False)
     actor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     actor_email = Column(String, nullable=True)

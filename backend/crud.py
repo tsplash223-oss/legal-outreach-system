@@ -11,16 +11,29 @@ class DuplicateFirmError(Exception):
         self.existing_firm = existing_firm
 
 
+def firm_profile_id(firm: schemas.FirmCreate):
+    return getattr(firm, "business_profile_id", None)
+
+
+def scoped_firm_query(db: Session, business_profile_id: int | None):
+    query = db.query(models.Firm)
+    if business_profile_id is not None:
+        query = query.filter(models.Firm.business_profile_id == business_profile_id)
+    return query
+
+
 def find_existing_firm(db: Session, firm: schemas.FirmCreate):
+    business_profile_id = firm_profile_id(firm)
+
     if firm.email:
-        existing_email = db.query(models.Firm).filter(
+        existing_email = scoped_firm_query(db, business_profile_id).filter(
             func.lower(models.Firm.email) == firm.email.lower()
         ).first()
 
         if existing_email:
             return existing_email
 
-    query = db.query(models.Firm).filter(models.Firm.firm_name == firm.firm_name)
+    query = scoped_firm_query(db, business_profile_id).filter(models.Firm.firm_name == firm.firm_name)
 
     if firm.city:
         query = query.filter(func.lower(models.Firm.city) == firm.city.lower())
@@ -33,7 +46,7 @@ def find_existing_firm(db: Session, firm: schemas.FirmCreate):
     if existing_firm:
         return existing_firm
 
-    return db.query(models.Firm).filter(
+    return scoped_firm_query(db, business_profile_id).filter(
         models.Firm.firm_name == firm.firm_name
     ).first()
 
@@ -63,5 +76,5 @@ def create_firm(db: Session, firm: schemas.FirmCreate):
     return db_firm
 
 
-def get_firms(db: Session):
-    return db.query(models.Firm).all()
+def get_firms(db: Session, business_profile_id: int | None = None):
+    return scoped_firm_query(db, business_profile_id).all()

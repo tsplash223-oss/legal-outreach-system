@@ -225,11 +225,11 @@ def build_newsletter_html(title: str, body_text: str, call_to_action: str | None
     """
 
 
-def selected_newsletter_contacts(db: Session, payload: dict):
+def selected_newsletter_contacts(db: Session, payload: dict, business_profile):
     audience = payload.get("audience", "selected")
     contact_ids = payload.get("contact_ids") or []
     statuses = payload.get("statuses") or []
-    query = db.query(models.Firm)
+    query = db.query(models.Firm).filter(models.Firm.business_profile_id == business_profile.id)
 
     if audience == "all":
         return query.filter(models.Firm.email.isnot(None)).order_by(models.Firm.firm_name.asc()).all()
@@ -257,16 +257,21 @@ def selected_newsletter_contacts(db: Session, payload: dict):
 
 
 @router.get("/contacts/")
-def get_newsletter_contacts(db: Session = Depends(get_db)):
-    firms = db.query(models.Firm).order_by(models.Firm.firm_name.asc()).all()
+def get_newsletter_contacts(business_profile_id: int | None = None, db: Session = Depends(get_db)):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    firms = db.query(models.Firm).filter(
+        models.Firm.business_profile_id == business_profile.id
+    ).order_by(models.Firm.firm_name.asc()).all()
     return [contact_item(firm) for firm in firms]
 
 
 @router.get("/stats/")
-def get_newsletter_stats(db: Session = Depends(get_db)):
-    contacts = db.query(models.Firm).all()
+def get_newsletter_stats(business_profile_id: int | None = None, db: Session = Depends(get_db)):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    contacts = db.query(models.Firm).filter(models.Firm.business_profile_id == business_profile.id).all()
     newsletter_logs = db.query(models.EmailLog).filter(
-        models.EmailLog.subject.like(f"{NEWSLETTER_LOG_PREFIX}%")
+        models.EmailLog.subject.like(f"{NEWSLETTER_LOG_PREFIX}%"),
+        models.EmailLog.business_profile_id == business_profile.id,
     ).order_by(models.EmailLog.sent_at.desc()).all()
     sent_logs = [log for log in newsletter_logs if log.status == "Sent"]
     blocked_count = sum(
@@ -364,7 +369,7 @@ def send_newsletter(
     if not title or not subject or not body_text:
         raise HTTPException(status_code=400, detail="Title, subject, and message body are required.")
 
-    candidates = selected_newsletter_contacts(db, payload)
+    candidates = selected_newsletter_contacts(db, payload, business_profile)
     newsletter_html = build_newsletter_html(title, body_text, payload.get("call_to_action"), business_profile)
     sent = []
     failed = []

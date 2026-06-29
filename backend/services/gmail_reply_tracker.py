@@ -335,9 +335,13 @@ def check_gmail_replies(db, business_profile=None):
         replies_by_firm_id = {}
         updated_firm_count = 0
 
+        firm_query = db.query(models.Firm.email, models.Firm).filter(models.Firm.email.isnot(None))
+        if business_profile:
+            firm_query = firm_query.filter(models.Firm.business_profile_id == business_profile.id)
+
         firms_by_email = {
             normalize_email(email): firm
-            for email, firm in db.query(models.Firm.email, models.Firm).filter(models.Firm.email.isnot(None)).all()
+            for email, firm in firm_query.all()
             if normalize_email(email)
         }
 
@@ -404,9 +408,12 @@ def check_gmail_replies(db, business_profile=None):
         ]
 
         replies_found = len(replies)
-        contacted_count = db.query(models.Firm).filter(
+        contacted_query = db.query(models.Firm).filter(
             models.Firm.status.in_(["Email Sent", "Replied"])
-        ).count()
+        )
+        if business_profile:
+            contacted_query = contacted_query.filter(models.Firm.business_profile_id == business_profile.id)
+        contacted_count = contacted_query.count()
         reply_rate_value = 0 if contacted_count == 0 else (replies_found / contacted_count) * 100
 
         return {

@@ -65,9 +65,11 @@ def ensure_business_profile_columns(bind=engine):
 def ensure_business_profile_foreign_key_columns(db: Session):
     inspector = inspect(db.bind)
     tables = {
+        "firms": "business_profile_id",
         "email_logs": "business_profile_id",
         "email_templates": "business_profile_id",
         "newsletter_drafts": "business_profile_id",
+        "audit_logs": "business_profile_id",
     }
 
     for table_name, column_name in tables.items():
@@ -107,7 +109,7 @@ def bootstrap_default_business_profiles():
             models.BusinessProfile.name == DRIVERS_ED_PROFILE_NAME
         ).first()
         if default_profile:
-            for model in (models.EmailLog, models.EmailTemplate, models.NewsletterDraft):
+            for model in (models.Firm, models.EmailLog, models.EmailTemplate, models.NewsletterDraft, models.AuditLog):
                 db.query(model).filter(model.business_profile_id.is_(None)).update(
                     {model.business_profile_id: default_profile.id}
                 )

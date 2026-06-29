@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 import models
 import schemas
 from audit import write_audit_log
+from business_profiles import get_business_profile_or_default
 from security import (
     create_access_token,
     generate_temporary_password,
@@ -228,8 +229,13 @@ def delete_user(
 @router.get("/audit-logs/", response_model=list[schemas.AuditLogResponse])
 def list_audit_logs(
     limit: int = 200,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role("admin")),
 ):
     safe_limit = max(1, min(500, limit))
-    return db.query(models.AuditLog).order_by(models.AuditLog.created_at.desc()).limit(safe_limit).all()
+    query = db.query(models.AuditLog)
+    if business_profile_id:
+        business_profile = get_business_profile_or_default(db, business_profile_id)
+        query = query.filter(models.AuditLog.business_profile_id == business_profile.id)
+    return query.order_by(models.AuditLog.created_at.desc()).limit(safe_limit).all()

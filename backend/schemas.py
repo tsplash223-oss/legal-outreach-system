@@ -16,6 +16,7 @@ VALID_FIRM_STATUSES = {
 
 
 class FirmBase(BaseModel):
+    business_profile_id: int | None = None
     firm_name: str
     practice_area: str | None = None
     city: str | None = None
@@ -63,6 +64,7 @@ class FirmCreate(FirmBase):
 
 class FirmStatusUpdate(BaseModel):
     status: str
+    business_profile_id: int | None = None
 
     @field_validator("status")
     @classmethod
@@ -75,6 +77,7 @@ class FirmStatusUpdate(BaseModel):
 
 class FirmNotesUpdate(BaseModel):
     notes: str | None = None
+    business_profile_id: int | None = None
 
 
 class FirmResponse(FirmBase):

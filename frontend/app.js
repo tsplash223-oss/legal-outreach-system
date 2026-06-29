@@ -418,7 +418,8 @@ function shouldAttachBusinessProfile(path) {
     "/firms/run-campaign",
     "/firms/send-batch-outreach",
     "/firms/",
-    "/newsletters"
+    "/newsletters",
+    "/audit-logs"
   ].some((prefix) => path.startsWith(prefix));
 }
 
