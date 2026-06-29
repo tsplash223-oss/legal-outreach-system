@@ -18,7 +18,11 @@ from services.gmail_reply_tracker import (
     gmail_file_config_for_profile,
     import_gmail_dependencies,
 )
-from business_profiles import GMAIL_PROFILE_NOT_CONFIGURED_MESSAGE
+from business_profiles import (
+    DRIVERS_ED_PROFILE_NAME,
+    GMAIL_PROFILE_NOT_CONFIGURED_MESSAGE,
+    HOPE_PROFILE_NAME,
+)
 
 load_dotenv()
 
@@ -33,6 +37,8 @@ GMAIL_API_CONFIGURATION_ERROR = (
     "Gmail API send failed. Check Gmail API credentials/token and Railway environment variables."
 )
 GMAIL_API_SCOPE_ERROR = "Gmail API token is missing gmail.send scope. Regenerate token.json with Gmail send permission."
+SIGNATURE_CONTENT_ID = "signature_image"
+SIGNATURE_IMAGE_HTML = '<img src="cid:signature_image" alt="Signature" style="width:140px; max-width:140px; display:block; margin:8px 0 4px 0;">'
 
 logger = logging.getLogger(__name__)
 
@@ -125,12 +131,61 @@ def html_to_plain_text(html):
     return text.strip()
 
 
-def build_email_message(sender_email, to_email, subject, html_body, plain_text_body=None):
+def signature_image_path_for_profile(business_profile=None):
+    backend_dir = Path(__file__).resolve().parent.parent
+    profile_name = (getattr(business_profile, "name", "") or "").strip()
+
+    if profile_name == HOPE_PROFILE_NAME:
+        return backend_dir / "Signature 2.png"
+
+    if profile_name == DRIVERS_ED_PROFILE_NAME or not profile_name:
+        return backend_dir / "signature.png.png"
+
+    return backend_dir / "signature.png.png"
+
+
+def ensure_signature_image_reference(html_body):
+    html_body = html_body or ""
+
+    if f"cid:{SIGNATURE_CONTENT_ID}" in html_body:
+        return html_body
+
+    body_close_match = re.search(r"(?i)</body\s*>", html_body)
+    if body_close_match:
+        return (
+            html_body[:body_close_match.start()]
+            + f"\n\n<p>{SIGNATURE_IMAGE_HTML}</p>\n"
+            + html_body[body_close_match.start():]
+        )
+
+    return f"{html_body}\n\n<p>{SIGNATURE_IMAGE_HTML}</p>"
+
+
+def attach_inline_signature_image(message, signature_path):
+    if not signature_path.exists():
+        logger.warning("Signature image file missing: %s", signature_path)
+        return
+
+    try:
+        with open(signature_path, "rb") as img_file:
+            img = MIMEImage(img_file.read())
+    except Exception:
+        logger.warning("Could not read signature image file: %s", signature_path, exc_info=True)
+        return
+
+    img.add_header("Content-ID", f"<{SIGNATURE_CONTENT_ID}>")
+    img.add_header("Content-Disposition", "inline")
+    img.add_header("X-Attachment-Id", SIGNATURE_CONTENT_ID)
+    message.attach(img)
+
+
+def build_email_message(sender_email, to_email, subject, html_body, plain_text_body=None, business_profile=None):
     msg = MIMEMultipart("related")
     msg["Subject"] = subject
     msg["From"] = sender_email
     msg["To"] = to_email
 
+    html_body = ensure_signature_image_reference(html_body)
     alternative = MIMEMultipart("alternative")
     fallback_text = plain_text_body or html_to_plain_text(html_body)
     if fallback_text:
@@ -138,15 +193,8 @@ def build_email_message(sender_email, to_email, subject, html_body, plain_text_b
     alternative.attach(MIMEText(html_body, "html", "utf-8"))
     msg.attach(alternative)
 
-    signature_path = Path(__file__).resolve().parent.parent / "signature.png.png"
-
-    if signature_path.exists():
-        with open(signature_path, "rb") as img_file:
-            img = MIMEImage(img_file.read())
-            img.add_header("Content-ID", "<signature_image>")
-            img.add_header("Content-Disposition", "inline")
-            img.add_header("X-Attachment-Id", "signature_image")
-            msg.attach(img)
+    signature_path = signature_image_path_for_profile(business_profile)
+    attach_inline_signature_image(msg, signature_path)
 
     return msg
 
@@ -241,7 +289,14 @@ def send_email(to_email, subject, body, plain_text_body=None, business_profile=N
         if not sender_email:
             raise EmailSendError(GMAIL_API_CONFIGURATION_ERROR)
 
-        msg = build_email_message(sender_email, to_email, subject, body, plain_text_body=plain_text_body)
+        msg = build_email_message(
+            sender_email,
+            to_email,
+            subject,
+            body,
+            plain_text_body=plain_text_body,
+            business_profile=business_profile,
+        )
         logger.info("Sending email with Gmail API to %s", to_email)
         send_email_with_gmail_api(service, msg)
         return True
@@ -254,7 +309,14 @@ def send_email(to_email, subject, body, plain_text_body=None, business_profile=N
         log_smtp_config_status()
         raise EmailSendError(SMTP_CONFIGURATION_ERROR)
 
-    msg = build_email_message(gmail_address, to_email, subject, body, plain_text_body=plain_text_body)
+    msg = build_email_message(
+        gmail_address,
+        to_email,
+        subject,
+        body,
+        plain_text_body=plain_text_body,
+        business_profile=business_profile,
+    )
 
     try:
         log_smtp_config_status()

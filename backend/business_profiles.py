@@ -28,7 +28,7 @@ Visit our website at https://www.greenlighthopefoundation.com.
 Thank you.
 
 CEO
-Dr. Atilade O Oshoniyi"""
+Dr. Atilade O Oshoniyi,DM,MSM, MBA, B.Sc"""
 
 
 DEFAULT_BUSINESS_PROFILES = [
