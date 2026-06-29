@@ -150,15 +150,24 @@ def ensure_signature_image_reference(html_body):
     if f"cid:{SIGNATURE_CONTENT_ID}" in html_body:
         return html_body
 
+    signature_paragraph = f"<p>{SIGNATURE_IMAGE_HTML}</p>"
+    thank_you_match = re.search(r"(?is)(<p[^>]*>\s*thank you\b.*?</p>)", html_body)
+    if thank_you_match:
+        return (
+            html_body[:thank_you_match.end()]
+            + f"\n\n{signature_paragraph}"
+            + html_body[thank_you_match.end():]
+        )
+
     body_close_match = re.search(r"(?i)</body\s*>", html_body)
     if body_close_match:
         return (
             html_body[:body_close_match.start()]
-            + f"\n\n<p>{SIGNATURE_IMAGE_HTML}</p>\n"
+            + f"\n\n{signature_paragraph}\n"
             + html_body[body_close_match.start():]
         )
 
-    return f"{html_body}\n\n<p>{SIGNATURE_IMAGE_HTML}</p>"
+    return f"{html_body}\n\n{signature_paragraph}"
 
 
 def attach_inline_signature_image(message, signature_path):
