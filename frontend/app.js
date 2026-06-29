@@ -4,6 +4,7 @@ console.log("Using LOCAL API_BASE:", API_BASE);
 
 const DEMO_MODE = false;
 const AUTH_TOKEN_KEY = "greenLightAuthToken";
+const BUSINESS_PROFILE_ID_KEY = "greenLightBusinessProfileId";
 
 const DEMO_ONLY_MESSAGE = "Demo only. Live sending is disabled.";
 const SIGNATURE_IMAGE_PLACEHOLDER = "{{signature_image}}";
@@ -170,6 +171,9 @@ let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || "";
 let currentUser = null;
 let usersCache = [];
 let auditLogsCache = [];
+let businessProfilesCache = [];
+let businessProfileOptionsCache = [];
+let selectedBusinessProfileId = Number(localStorage.getItem(BUSINESS_PROFILE_ID_KEY) || 0);
 
 const MAIN_PAGE_SELECTORS = [
   "#dashboard",
@@ -382,6 +386,76 @@ function clearAuth() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+function getSelectedBusinessProfileId() {
+  return Number(selectedBusinessProfileId || localStorage.getItem(BUSINESS_PROFILE_ID_KEY) || 0) || null;
+}
+
+function getSelectedBusinessProfile() {
+  const selectedId = getSelectedBusinessProfileId();
+  return businessProfileOptionsCache.find((profile) => profile.id === selectedId)
+    || businessProfileOptionsCache.find((profile) => profile.is_default)
+    || businessProfileOptionsCache[0]
+    || null;
+}
+
+function setSelectedBusinessProfile(profileId, shouldPersist = true) {
+  selectedBusinessProfileId = Number(profileId || 0);
+  const profile = getSelectedBusinessProfile();
+  if (profile) selectedBusinessProfileId = profile.id;
+
+  if (shouldPersist && selectedBusinessProfileId) {
+    localStorage.setItem(BUSINESS_PROFILE_ID_KEY, String(selectedBusinessProfileId));
+  }
+
+  renderBusinessProfileSelector();
+}
+
+function shouldAttachBusinessProfile(path) {
+  return [
+    "/templates",
+    "/firms/check-replies",
+    "/firms/run-auto-follow-ups",
+    "/firms/run-campaign",
+    "/firms/send-batch-outreach",
+    "/firms/",
+    "/newsletters"
+  ].some((prefix) => path.startsWith(prefix));
+}
+
+function withBusinessProfileRequest(path, options = {}) {
+  const profileId = getSelectedBusinessProfileId();
+  if (!profileId || !shouldAttachBusinessProfile(path)) {
+    return { path, options };
+  }
+
+  const updatedOptions = { ...options };
+  const body = updatedOptions.body;
+
+  if (body instanceof FormData) {
+    body.set("business_profile_id", String(profileId));
+    return { path, options: updatedOptions };
+  }
+
+  const contentType = new Headers(updatedOptions.headers || {}).get("Content-Type") || "";
+  if (body && contentType.includes("application/json")) {
+    try {
+      updatedOptions.body = JSON.stringify({
+        ...JSON.parse(body),
+        business_profile_id: profileId
+      });
+      return { path, options: updatedOptions };
+    } catch (error) {
+      // Fall through to query-string attachment if the JSON body cannot be parsed.
+    }
+  }
+
+  const separator = path.includes("?") ? "&" : "?";
+  return {
+    path: `${path}${separator}business_profile_id=${encodeURIComponent(profileId)}`,
+    options: updatedOptions
+  };
+}
+
 function showLoginGate(message = "") {
   document.body.classList.add("auth-locked");
   getElement("loginScreen")?.classList.remove("section-hidden");
@@ -396,6 +470,45 @@ function showApplication() {
   setText("currentUserEmail", currentUser?.email || "");
   setText("currentUserRole", currentUser?.role || "");
   applyRoleVisibility();
+}
+
+async function loadBusinessProfileOptions() {
+  if (DEMO_MODE) {
+    return [
+      { id: 1, name: "Green Light Drivers Ed & DUI School LLC", is_default: true },
+      { id: 2, name: "Greenlight Hope Foundation", is_default: false }
+    ];
+  }
+
+  return fetchJson("/business-profiles/active-options/");
+}
+
+async function initializeBusinessProfiles() {
+  businessProfileOptionsCache = await loadBusinessProfileOptions();
+  const storedId = getSelectedBusinessProfileId();
+  const selectedExists = businessProfileOptionsCache.some((profile) => profile.id === storedId);
+  const defaultProfile = businessProfileOptionsCache.find((profile) => profile.is_default) || businessProfileOptionsCache[0];
+
+  setSelectedBusinessProfile(selectedExists ? storedId : defaultProfile?.id, true);
+}
+
+function renderBusinessProfileSelector() {
+  const selector = getElement("businessProfileSelector");
+  const selectedProfile = getSelectedBusinessProfile();
+  const selectedName = selectedProfile?.name || "Green Light Drivers Ed & DUI School LLC";
+
+  if (selector) {
+    selector.innerHTML = businessProfileOptionsCache.length
+      ? businessProfileOptionsCache.map((profile) => `
+          <option value="${escapeHtml(profile.id)}" ${profile.id === selectedProfile?.id ? "selected" : ""}>${escapeHtml(profile.name)}</option>
+        `).join("")
+      : `<option value="">Green Light Drivers Ed & DUI School LLC</option>`;
+  }
+
+  setText("selectedBusinessName", selectedName);
+  setText("settingsBusinessName", selectedName);
+  const headerEyebrow = document.querySelector(".top-header .header-copy .eyebrow");
+  if (headerEyebrow) headerEyebrow.textContent = selectedName;
 }
 
 function applyRoleVisibility() {
@@ -449,6 +562,7 @@ async function login(event) {
     currentUser = data.user;
     localStorage.setItem(AUTH_TOKEN_KEY, authToken);
     showApplication();
+    await initializeBusinessProfiles();
     await loadDashboard();
   } catch (error) {
     if (message) message.textContent = error.message || "Login failed.";
@@ -469,6 +583,7 @@ async function initializeAuth() {
   try {
     currentUser = await fetchJson("/auth/me");
     showApplication();
+    await initializeBusinessProfiles();
     await loadDashboard();
   } catch (error) {
     showLoginGate("Please sign in.");
@@ -565,6 +680,10 @@ function getApiErrorMessage(error, fallback = "Request failed.") {
 }
 
 async function apiFetch(path, options = {}) {
+  const profiledRequest = withBusinessProfileRequest(path, options);
+  path = profiledRequest.path;
+  options = profiledRequest.options;
+
   const headers = new Headers(options.headers || {});
   const body = options.body;
 
@@ -1375,9 +1494,133 @@ async function loadUsers() {
   return fetchJson("/users/");
 }
 
+async function loadBusinessProfiles() {
+  if (!hasRole("admin")) return [];
+  return fetchJson("/business-profiles/");
+}
+
 async function loadAuditLogs() {
   if (!hasRole("admin")) return [];
   return fetchJson("/audit-logs/?limit=100");
+}
+
+function renderBusinessProfiles(profiles) {
+  const table = getElement("businessProfilesTable");
+  if (!table) return;
+
+  if (!profiles.length) {
+    table.innerHTML = `<tr><td colspan="5"><div class="table-state">No business profiles found.</div></td></tr>`;
+    return;
+  }
+
+  table.innerHTML = profiles.map((profile) => `
+    <tr>
+      <td>${escapeHtml(profile.name)}</td>
+      <td>${escapeHtml(profile.sender_email || "Not set")}</td>
+      <td>
+        <div class="firm-cell">
+          <strong>${escapeHtml(profile.gmail_credentials_env_key || "Not set")}</strong>
+          <span>${escapeHtml(profile.gmail_token_env_key || "Not set")}</span>
+        </div>
+      </td>
+      <td>${statusBadge(profile.is_active ? "Active" : "Disabled")}</td>
+      <td>
+        <button class="button button-ghost business-profile-edit-button" type="button" data-profile-id="${profile.id}">Edit</button>
+        <button class="button button-danger business-profile-disable-button" type="button" data-profile-id="${profile.id}" ${profile.name === "Green Light Drivers Ed & DUI School LLC" ? "disabled" : ""}>Disable</button>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function clearBusinessProfileForm() {
+  getElement("businessProfileForm")?.reset();
+  const id = getElement("businessProfileId");
+  const active = getElement("businessProfileActive");
+  if (id) id.value = "";
+  if (active) active.checked = true;
+}
+
+function editBusinessProfile(profileId) {
+  const profile = businessProfilesCache.find((item) => item.id === Number(profileId));
+  if (!profile) return;
+
+  const fields = {
+    businessProfileId: profile.id,
+    businessProfileName: profile.name || "",
+    businessProfileSenderEmail: profile.sender_email || "",
+    businessProfilePhone: profile.phone || "",
+    businessProfileWebsite: profile.website || "",
+    businessProfileCredentialsEnv: profile.gmail_credentials_env_key || "",
+    businessProfileTokenEnv: profile.gmail_token_env_key || "",
+    businessProfileAddress: profile.address || "",
+    businessProfileDefaultSubject: profile.default_template_subject || "",
+    businessProfileDefaultBody: profile.default_template_body || ""
+  };
+
+  Object.entries(fields).forEach(([id, value]) => {
+    const element = getElement(id);
+    if (element) element.value = value;
+  });
+
+  const active = getElement("businessProfileActive");
+  if (active) active.checked = Boolean(profile.is_active);
+}
+
+function getBusinessProfilePayloadFromForm() {
+  return {
+    name: getElement("businessProfileName")?.value.trim() || "",
+    sender_email: getElement("businessProfileSenderEmail")?.value.trim() || null,
+    phone: getElement("businessProfilePhone")?.value.trim() || null,
+    website: getElement("businessProfileWebsite")?.value.trim() || null,
+    address: getElement("businessProfileAddress")?.value.trim() || null,
+    default_template_subject: getElement("businessProfileDefaultSubject")?.value.trim() || null,
+    default_template_body: getElement("businessProfileDefaultBody")?.value.trim() || null,
+    gmail_credentials_env_key: getElement("businessProfileCredentialsEnv")?.value.trim() || null,
+    gmail_token_env_key: getElement("businessProfileTokenEnv")?.value.trim() || null,
+    is_active: getElement("businessProfileActive")?.checked ?? true
+  };
+}
+
+async function saveBusinessProfile(event) {
+  event.preventDefault();
+  const message = getElement("businessProfileMessage");
+  const profileId = getElement("businessProfileId")?.value;
+  const payload = getBusinessProfilePayloadFromForm();
+
+  if (!payload.name) {
+    if (message) message.textContent = "Business profile name is required.";
+    return;
+  }
+
+  try {
+    await fetchJson(profileId ? `/business-profiles/${profileId}` : "/business-profiles/", {
+      method: profileId ? "PUT" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    if (message) message.textContent = "Business profile saved.";
+    clearBusinessProfileForm();
+    await initializeBusinessProfiles();
+    await refreshAdminData();
+  } catch (error) {
+    if (message) message.textContent = error.message || "Unable to save business profile.";
+  }
+}
+
+async function disableBusinessProfile(profileId) {
+  const message = getElement("businessProfileMessage");
+  const confirmed = confirm("Disable this business profile?");
+  if (!confirmed) return;
+
+  try {
+    await fetchJson(`/business-profiles/${profileId}`, { method: "DELETE" });
+    if (message) message.textContent = "Business profile disabled.";
+    await initializeBusinessProfiles();
+    await refreshAdminData();
+  } catch (error) {
+    if (message) message.textContent = error.message || "Unable to disable business profile.";
+  }
 }
 
 function renderUsers(users) {
@@ -1548,11 +1791,13 @@ async function deleteUser(userId) {
 
 async function refreshAdminData() {
   if (!hasRole("admin")) return;
-  const [users, auditLogs] = await Promise.all([loadUsers(), loadAuditLogs()]);
+  const [users, auditLogs, businessProfiles] = await Promise.all([loadUsers(), loadAuditLogs(), loadBusinessProfiles()]);
   usersCache = users;
   auditLogsCache = auditLogs;
+  businessProfilesCache = businessProfiles;
   renderUsers(usersCache);
   renderAuditLogs(auditLogsCache);
+  renderBusinessProfiles(businessProfilesCache);
 }
 
 async function updateFirmStatus(firmId, status) {
@@ -2499,6 +2744,21 @@ function setNewsletterPageMode(sectionId = getSectionFromHash(), shouldScroll = 
 function setupEventListeners() {
   getElement("loginForm")?.addEventListener("submit", login);
   getElement("logoutButton")?.addEventListener("click", logout);
+  getElement("businessProfileSelector")?.addEventListener("change", async (event) => {
+    setSelectedBusinessProfile(event.target.value, true);
+    await loadDashboard();
+  });
+  getElement("businessProfileForm")?.addEventListener("submit", saveBusinessProfile);
+  getElement("businessProfileNewButton")?.addEventListener("click", clearBusinessProfileForm);
+  getElement("businessProfilesTable")?.addEventListener("click", (event) => {
+    if (event.target.classList.contains("business-profile-edit-button")) {
+      editBusinessProfile(event.target.dataset.profileId);
+    }
+
+    if (event.target.classList.contains("business-profile-disable-button")) {
+      disableBusinessProfile(Number(event.target.dataset.profileId));
+    }
+  });
   getElement("userCreateForm")?.addEventListener("submit", createUser);
   getElement("generatePasswordButton")?.addEventListener("click", () => {
     const input = getElement("newUserPassword");

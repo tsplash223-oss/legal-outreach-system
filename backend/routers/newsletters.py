@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 import models
 from audit import write_audit_log
+from business_profiles import get_business_profile_or_default
 from database import SessionLocal
 from security import get_current_user, require_min_role
 from services.email_sender import send_email
@@ -105,7 +106,7 @@ def escape_html(value):
     )
 
 
-def build_newsletter_html(title: str, body_text: str, call_to_action: str | None = None):
+def build_newsletter_html(title: str, body_text: str, call_to_action: str | None = None, business_profile=None):
     cta = (call_to_action or "").strip()
     cta_html = ""
 
@@ -116,6 +117,12 @@ def build_newsletter_html(title: str, body_text: str, call_to_action: str | None
             <p>{escape_html(cta)}</p>
           </div>
         """
+
+    profile_name = getattr(business_profile, "name", None) or "Green Light Drivers Ed & DUI School LLC"
+    profile_address = escape_html(getattr(business_profile, "address", None) or "6110 McFarland Station Drive, Suite 703\nAlpharetta, GA 30004").replace("\n", "<br>")
+    profile_phone = getattr(business_profile, "phone", None) or "(770) 685-1600"
+    profile_email = getattr(business_profile, "sender_email", None) or "info@greenlightdrivers.com"
+    profile_website = getattr(business_profile, "website", None) or "https://greenlightdrivers.com"
 
     return f"""
     <!DOCTYPE html>
@@ -201,15 +208,14 @@ def build_newsletter_html(title: str, body_text: str, call_to_action: str | None
               {cta_html}
             </div>
             <div class="business-footer">
-              <strong>Green Light Drivers Ed &amp; DUI School LLC</strong><br>
-              6110 McFarland Station Drive, Suite 703<br>
-              Alpharetta, GA 30004<br>
-              Phone: (770) 685-1600<br>
-              Email: info@greenlightdrivers.com<br>
-              Website: <a href="https://greenlightdrivers.com">https://greenlightdrivers.com</a>
+              <strong>{escape_html(profile_name)}</strong><br>
+              {profile_address}<br>
+              Phone: {escape_html(profile_phone)}<br>
+              Email: {escape_html(profile_email)}<br>
+              Website: <a href="{escape_html(profile_website)}">{escape_html(profile_website)}</a>
             </div>
             <div class="compliance-footer">
-              You are receiving this message from Green Light Drivers Ed &amp; DUI School LLC.<br>
+              You are receiving this message from {escape_html(profile_name)}.<br>
               To opt out of future promotional emails, reply with "Unsubscribe".
             </div>
           </div>
@@ -278,7 +284,7 @@ def get_newsletter_stats(db: Session = Depends(get_db)):
 
 
 @router.post("/preview/")
-def preview_newsletter(payload: dict = Body(...)):
+def preview_newsletter(payload: dict = Body(...), db: Session = Depends(get_db)):
     title = (payload.get("title") or "").strip()
     subject = (payload.get("subject") or "").strip()
     body_text = (payload.get("body_text") or "").strip()
@@ -286,10 +292,12 @@ def preview_newsletter(payload: dict = Body(...)):
     if not title or not subject or not body_text:
         raise HTTPException(status_code=400, detail="Title, subject, and message body are required.")
 
+    business_profile = get_business_profile_or_default(db, payload.get("business_profile_id"))
+
     return {
         "success": True,
         "subject": subject,
-        "html": build_newsletter_html(title, body_text, payload.get("call_to_action")),
+        "html": build_newsletter_html(title, body_text, payload.get("call_to_action"), business_profile),
     }
 
 
@@ -303,6 +311,7 @@ def save_newsletter_draft(
     title = (payload.get("title") or "").strip()
     subject = (payload.get("subject") or "").strip()
     body_text = (payload.get("body_text") or "").strip()
+    business_profile = get_business_profile_or_default(db, payload.get("business_profile_id"))
 
     if not title or not subject or not body_text:
         raise HTTPException(status_code=400, detail="Title, subject, and message body are required.")
@@ -312,6 +321,7 @@ def save_newsletter_draft(
         subject=subject,
         body_text=body_text,
         call_to_action=(payload.get("call_to_action") or "").strip() or None,
+        business_profile_id=business_profile.id,
     )
 
     db.add(draft)
@@ -321,7 +331,7 @@ def save_newsletter_draft(
         actor=current_user,
         request=request,
         target_type="newsletter_draft",
-        details={"title": title, "subject": subject},
+        details={"title": title, "subject": subject, "business_profile_id": business_profile.id},
     )
     db.commit()
     db.refresh(draft)
@@ -346,6 +356,7 @@ def send_newsletter(
     confirmed = bool(payload.get("confirmed"))
     send_limit = max(1, min(250, int(payload.get("send_limit") or 25)))
     delay_seconds = max(0, min(300, int(payload.get("delay_seconds") or 10)))
+    business_profile = get_business_profile_or_default(db, payload.get("business_profile_id"))
 
     if not confirmed:
         raise HTTPException(status_code=400, detail="Newsletter confirmation checkbox is required.")
@@ -354,7 +365,7 @@ def send_newsletter(
         raise HTTPException(status_code=400, detail="Title, subject, and message body are required.")
 
     candidates = selected_newsletter_contacts(db, payload)
-    newsletter_html = build_newsletter_html(title, body_text, payload.get("call_to_action"))
+    newsletter_html = build_newsletter_html(title, body_text, payload.get("call_to_action"), business_profile)
     sent = []
     failed = []
     skipped = []
@@ -392,6 +403,7 @@ def send_newsletter(
                 to_email=firm.email,
                 subject=subject,
                 body=newsletter_html,
+                business_profile=business_profile,
             )
 
             db.add(models.EmailLog(
@@ -401,6 +413,7 @@ def send_newsletter(
                 subject=log_subject,
                 status="Sent",
                 error_message=None,
+                business_profile_id=business_profile.id,
             ))
             write_audit_log(
                 db,
@@ -409,7 +422,7 @@ def send_newsletter(
                 request=request,
                 target_type="firm",
                 target_id=firm.id,
-                details={"email": firm.email, "subject": subject, "title": title},
+                details={"email": firm.email, "subject": subject, "title": title, "business_profile_id": business_profile.id},
             )
             db.commit()
             sent.append(report_item(firm))
@@ -421,6 +434,7 @@ def send_newsletter(
                 subject=log_subject,
                 status="Failed",
                 error_message=str(exc),
+                business_profile_id=business_profile.id,
             ))
             write_audit_log(
                 db,
@@ -429,7 +443,7 @@ def send_newsletter(
                 request=request,
                 target_type="firm",
                 target_id=firm.id,
-                details={"email": firm.email, "subject": subject, "title": title, "error": str(exc)},
+                details={"email": firm.email, "subject": subject, "title": title, "error": str(exc), "business_profile_id": business_profile.id},
             )
             db.commit()
             failed.append(report_item(firm, error=str(exc)))

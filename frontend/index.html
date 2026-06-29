@@ -114,6 +114,13 @@
         </div>
 
         <div class="header-actions">
+          <label class="business-profile-select">
+            <span>Business Profile</span>
+            <select id="businessProfileSelector">
+              <option value="">Loading profiles...</option>
+            </select>
+            <small id="selectedBusinessName">Green Light Drivers Ed & DUI School LLC</small>
+          </label>
           <div class="system-status" id="systemStatus" aria-live="polite">
             <span class="status-dot"></span>
             <div>
@@ -990,11 +997,89 @@
           </div>
           <div>
             <span>Business unit</span>
-            <strong>Green Light Drivers Ed & DUI School LLC</strong>
+            <strong id="settingsBusinessName">Green Light Drivers Ed & DUI School LLC</strong>
           </div>
           <div>
             <span>Frontend</span>
             <strong>Plain HTML,CSS,JS</strong>
+          </div>
+        </div>
+        <div class="business-profile-management">
+          <div class="section-heading">
+            <div>
+              <span class="eyebrow">Business Profiles</span>
+              <h3>Account Settings</h3>
+            </div>
+          </div>
+          <form class="business-profile-form" id="businessProfileForm">
+            <input id="businessProfileId" type="hidden" />
+            <label class="field">
+              <span>Name</span>
+              <input id="businessProfileName" type="text" required />
+            </label>
+            <label class="field">
+              <span>Sender Email</span>
+              <input id="businessProfileSenderEmail" type="email" />
+            </label>
+            <label class="field">
+              <span>Phone</span>
+              <input id="businessProfilePhone" type="text" />
+            </label>
+            <label class="field">
+              <span>Website</span>
+              <input id="businessProfileWebsite" type="url" />
+            </label>
+            <label class="field">
+              <span>Gmail Credentials Env Key</span>
+              <input id="businessProfileCredentialsEnv" type="text" />
+            </label>
+            <label class="field">
+              <span>Gmail Token Env Key</span>
+              <input id="businessProfileTokenEnv" type="text" />
+            </label>
+            <label class="field business-profile-wide">
+              <span>Address</span>
+              <textarea id="businessProfileAddress" rows="3"></textarea>
+            </label>
+            <label class="field business-profile-wide">
+              <span>Default Template Subject</span>
+              <input id="businessProfileDefaultSubject" type="text" />
+            </label>
+            <label class="field business-profile-wide">
+              <span>Default Template Body</span>
+              <textarea id="businessProfileDefaultBody" rows="6"></textarea>
+            </label>
+            <label class="toggle-field">
+              <input id="businessProfileActive" type="checkbox" checked />
+              <span class="toggle-track" aria-hidden="true"></span>
+              <span>
+                <strong>Active Profile</strong>
+                <small>Active profiles are available in the selector.</small>
+              </span>
+            </label>
+            <button class="button button-secondary" id="businessProfileNewButton" type="button">New Profile</button>
+            <button class="button button-primary" id="businessProfileSaveButton" type="submit">Save Profile</button>
+          </form>
+          <div class="inline-feedback" id="businessProfileMessage" role="status" aria-live="polite"></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Sender Email</th>
+                  <th>Env Keys</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="businessProfilesTable">
+                <tr>
+                  <td colspan="5">
+                    <div class="table-state">Loading business profiles...</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
         <div class="danger-zone">

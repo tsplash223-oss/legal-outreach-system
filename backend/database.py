@@ -35,6 +35,7 @@ MINIMUM_POSTGRES_SEQUENCE_TABLES = (
     "audit_logs",
     "email_templates",
     "newsletter_drafts",
+    "business_profiles",
 )
 
 

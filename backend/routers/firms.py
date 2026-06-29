@@ -15,6 +15,7 @@ import crud
 import models
 import schemas
 from audit import write_audit_log
+from business_profiles import DRIVERS_ED_PROFILE_NAME, get_business_profile_or_default
 from database import DATABASE_PATH, IS_SQLITE, SessionLocal
 from security import get_current_user, require_min_role, require_role
 from services.lead_finder import GoogleMapsConfigurationError, GoogleMapsSearchError, search_law_firms
@@ -318,7 +319,7 @@ def email_failure_reason(error: Exception):
     return safe_email_error_message(error)
 
 
-def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None, request: Request | None = None):
+def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None, request: Request | None = None, business_profile=None):
     follow_up_type = next_follow_up_type(firm.follow_up_count or 0)
     body = follow_up_email_body(firm.firm_name)
     sent_at = utc_now()
@@ -337,7 +338,8 @@ def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None,
         send_email(
             to_email=firm.email,
             subject=FOLLOW_UP_SUBJECT,
-            body=body
+            body=body,
+            business_profile=business_profile,
         )
     except Exception as exc:
         failure_reason = email_failure_reason(exc)
@@ -356,6 +358,7 @@ def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None,
                 subject=f"{FOLLOW_UP_SUBJECT} ({follow_up_type})",
                 status="Failed",
                 error_message=failure_reason,
+                business_profile_id=getattr(business_profile, "id", None),
                 sent_at=utc_now()
             )
 
@@ -395,6 +398,7 @@ def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None,
             subject=f"{FOLLOW_UP_SUBJECT} ({follow_up_type})",
             status="Sent",
             error_message=None,
+            business_profile_id=getattr(business_profile, "id", None),
             sent_at=sent_at
         )
 
@@ -409,7 +413,7 @@ def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None,
             request=request,
             target_type="firm",
             target_id=firm.id,
-            details={"email": firm.email, "follow_up_type": follow_up_type, "subject": log.subject},
+            details={"email": firm.email, "follow_up_type": follow_up_type, "subject": log.subject, "business_profile_id": getattr(business_profile, "id", None)},
         )
         db.commit()
 
@@ -435,28 +439,38 @@ def send_follow_up_for_firm(firm, db: Session, actor: models.User | None = None,
         raise HTTPException(status_code=500, detail="Follow-up was sent, but the result could not be saved.") from exc
 
 
-def deactivate_templates(db: Session):
-    db.query(models.EmailTemplate).update({models.EmailTemplate.is_active: False})
+def deactivate_templates(db: Session, business_profile_id: int | None = None):
+    query = db.query(models.EmailTemplate)
+    if business_profile_id:
+        query = query.filter(models.EmailTemplate.business_profile_id == business_profile_id)
+    else:
+        query = query.filter(models.EmailTemplate.business_profile_id.is_(None))
+    query.update({models.EmailTemplate.is_active: False})
 
 
-def restore_official_template_if_needed(db: Session):
-    active_template = db.query(models.EmailTemplate).filter(models.EmailTemplate.is_active.is_(True)).first()
+def restore_official_template_if_needed(db: Session, business_profile_id: int | None = None):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    active_template = db.query(models.EmailTemplate).filter(
+        models.EmailTemplate.is_active.is_(True),
+        models.EmailTemplate.business_profile_id == business_profile.id,
+    ).first()
 
-    if active_template and is_official_template(active_template.body_text):
+    if active_template and (business_profile.name != DRIVERS_ED_PROFILE_NAME or is_official_template(active_template.body_text)):
         return active_template
 
     if active_template:
         active_template.name = active_template.name or "Main outreach letter"
-        active_template.subject = DEFAULT_SUBJECT
-        active_template.body_html = DEFAULT_BODY_TEXT
+        active_template.subject = business_profile.default_template_subject or DEFAULT_SUBJECT
+        active_template.body_html = business_profile.default_template_body or DEFAULT_BODY_TEXT
         db.commit()
         db.refresh(active_template)
         return active_template
 
     db_template = models.EmailTemplate(
         name="Main outreach letter",
-        subject=DEFAULT_SUBJECT,
-        body_html=DEFAULT_BODY_TEXT,
+        subject=business_profile.default_template_subject or DEFAULT_SUBJECT,
+        body_html=business_profile.default_template_body or DEFAULT_BODY_TEXT,
+        business_profile_id=business_profile.id,
         is_active=True
     )
     db.add(db_template)
@@ -467,13 +481,16 @@ def restore_official_template_if_needed(db: Session):
 
 
 @router.get("/templates/", response_model=list[schemas.EmailTemplateResponse], tags=["templates"])
-def list_email_templates(db: Session = Depends(get_db)):
-    return db.query(models.EmailTemplate).order_by(models.EmailTemplate.updated_at.desc()).all()
+def list_email_templates(business_profile_id: int | None = None, db: Session = Depends(get_db)):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    return db.query(models.EmailTemplate).filter(
+        models.EmailTemplate.business_profile_id == business_profile.id
+    ).order_by(models.EmailTemplate.updated_at.desc()).all()
 
 
 @router.get("/templates/active/", response_model=schemas.EmailTemplateResponse | None, tags=["templates"])
-def get_active_email_template(db: Session = Depends(get_db)):
-    return restore_official_template_if_needed(db)
+def get_active_email_template(business_profile_id: int | None = None, db: Session = Depends(get_db)):
+    return restore_official_template_if_needed(db, business_profile_id)
 
 
 @router.post("/templates/", response_model=schemas.EmailTemplateResponse, tags=["templates"])
@@ -483,13 +500,16 @@ def create_email_template(
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_role("admin")),
 ):
+    business_profile = get_business_profile_or_default(db, template.business_profile_id)
+
     if template.is_active:
-        deactivate_templates(db)
+        deactivate_templates(db, business_profile.id)
 
     db_template = models.EmailTemplate(
         name=template.name,
         subject=template.subject,
         body_html=template.body_text,
+        business_profile_id=business_profile.id,
         is_active=template.is_active
     )
 
@@ -500,7 +520,7 @@ def create_email_template(
         actor=current_user,
         request=request,
         target_type="email_template",
-        details={"name": template.name, "is_active": template.is_active},
+        details={"name": template.name, "is_active": template.is_active, "business_profile_id": business_profile.id},
     )
     db.commit()
     db.refresh(db_template)
@@ -523,8 +543,10 @@ def update_email_template(
 
     updates = template.model_dump(exclude_unset=True)
 
+    business_profile_id = updates.get("business_profile_id", db_template.business_profile_id)
+
     if updates.get("is_active") is True:
-        deactivate_templates(db)
+        deactivate_templates(db, business_profile_id)
 
     for field, value in updates.items():
         setattr(db_template, field, value)
@@ -556,7 +578,7 @@ def activate_email_template(
     if not db_template:
         raise HTTPException(status_code=404, detail="Email template not found")
 
-    deactivate_templates(db)
+    deactivate_templates(db, db_template.business_profile_id)
     db_template.is_active = True
     write_audit_log(
         db,
@@ -850,14 +872,16 @@ async def import_excel_firms(
 
 
 @router.get("/firms/stats/")
-def get_firm_stats(db: Session = Depends(get_db)):
+def get_firm_stats(business_profile_id: int | None = None, db: Session = Depends(get_db)):
     total_firms = db.query(models.Firm).count()
     firms_with_emails = db.query(models.Firm).filter(models.Firm.email.isnot(None)).count()
     firms_without_emails = db.query(models.Firm).filter(models.Firm.email.is_(None)).count()
     emails_sent = db.query(models.Firm).filter(models.Firm.status == "Email Sent").count()
     not_contacted = db.query(models.Firm).filter(models.Firm.status == "Not Contacted").count()
-    failed_logs = db.query(models.EmailLog).filter(models.EmailLog.status == "Failed").count()
-    sent_logs = db.query(models.EmailLog).filter(models.EmailLog.status == "Sent").count()
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    log_query = db.query(models.EmailLog).filter(models.EmailLog.business_profile_id == business_profile.id)
+    failed_logs = log_query.filter(models.EmailLog.status == "Failed").count()
+    sent_logs = log_query.filter(models.EmailLog.status == "Sent").count()
 
     return {
         "total_firms": total_firms,
@@ -871,13 +895,15 @@ def get_firm_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/firms/analytics/", response_model=schemas.FirmAnalyticsResponse)
-def get_firm_analytics(db: Session = Depends(get_db)):
+def get_firm_analytics(business_profile_id: int | None = None, db: Session = Depends(get_db)):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
     firms = db.query(models.Firm).all()
     sent_firm_ids = {
         firm_id
         for (firm_id,) in db.query(models.EmailLog.firm_id).filter(
             models.EmailLog.status == "Sent",
-            models.EmailLog.firm_id.isnot(None)
+            models.EmailLog.firm_id.isnot(None),
+            models.EmailLog.business_profile_id == business_profile.id,
         ).all()
     }
     contacted_statuses = {
@@ -917,10 +943,14 @@ def get_firm_analytics(db: Session = Depends(get_db)):
 
 @router.get("/firms/email-logs/")
 def get_email_logs(
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
-    logs = db.query(models.EmailLog).order_by(models.EmailLog.sent_at.asc()).all()
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    logs = db.query(models.EmailLog).filter(
+        models.EmailLog.business_profile_id == business_profile.id
+    ).order_by(models.EmailLog.sent_at.asc()).all()
 
     return [
         {
@@ -930,6 +960,7 @@ def get_email_logs(
             "email": log.email,
             "subject": log.subject,
             "status": log.status,
+            "business_profile_id": log.business_profile_id,
             "failure_reason": log.error_message,
             "error_message": log.error_message,
             "sent_at": utc_datetime_iso(log.sent_at),
@@ -946,10 +977,12 @@ def get_email_config_check(current_user: models.User = Depends(require_role("adm
 @router.get("/firms/check-replies/")
 def check_replies(
     request: Request,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    result = check_gmail_replies(db)
+    business_profile = get_business_profile_or_default(db, business_profile_id)
+    result = check_gmail_replies(db, business_profile)
     write_audit_log(
         db,
         "gmail.reply_check",
@@ -961,6 +994,7 @@ def check_replies(
             "checked_messages": result.get("checked_messages"),
             "replies_found": result.get("replies_found"),
             "updated_firms": result.get("updated_firms"),
+            "business_profile_id": business_profile.id,
         },
     )
     db.commit()
@@ -1006,10 +1040,12 @@ def update_auto_follow_up_settings(
 @router.post("/firms/run-auto-follow-ups/")
 def run_auto_follow_ups(
     request: Request,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
     settings = load_auto_follow_up_settings()
+    business_profile = get_business_profile_or_default(db, business_profile_id)
 
     if not settings["enabled"]:
         return {
@@ -1044,7 +1080,7 @@ def run_auto_follow_ups(
     failed = []
 
     for index, firm in enumerate(firms_to_send):
-        result = send_follow_up_for_firm(firm, db, actor=current_user, request=request)
+        result = send_follow_up_for_firm(firm, db, actor=current_user, request=request, business_profile=business_profile)
 
         if result["success"]:
             sent.append(result)
@@ -1195,6 +1231,7 @@ def run_campaign(
     keyword: str,
     city: str,
     state: str,
+    business_profile_id: int | None = None,
     limit: int = 3,
     delay_seconds: int = 10,
     send_immediately: bool = True,
@@ -1203,6 +1240,7 @@ def run_campaign(
 ):
     safe_limit = max(0, limit)
     safe_delay_seconds = max(0, delay_seconds)
+    business_profile = get_business_profile_or_default(db, business_profile_id)
 
     try:
         results = search_law_firms(keyword, city, state)
@@ -1370,14 +1408,16 @@ def run_campaign(
                 generated = generate_outreach_email(
                     firm_name=firm.firm_name,
                     city=firm.city,
-                    practice_area=firm.practice_area
+                    practice_area=firm.practice_area,
+                    business_profile=business_profile,
                 )
                 subject = generated["subject"]
 
                 send_email(
                     to_email=firm.email,
                     subject=subject,
-                    body=generated["body"]
+                    body=generated["body"],
+                    business_profile=business_profile,
                 )
 
                 log = models.EmailLog(
@@ -1387,6 +1427,7 @@ def run_campaign(
                     subject=subject,
                     status="Sent",
                     error_message=None,
+                    business_profile_id=business_profile.id,
                     sent_at=sent_at
                 )
 
@@ -1399,7 +1440,7 @@ def run_campaign(
                     request=request,
                     target_type="firm",
                     target_id=firm.id,
-                    details={"email": firm.email, "subject": subject, "source": "run_campaign"},
+                    details={"email": firm.email, "subject": subject, "source": "run_campaign", "business_profile_id": business_profile.id},
                 )
                 db.commit()
 
@@ -1419,6 +1460,7 @@ def run_campaign(
                         subject=subject,
                         status="Failed",
                         error_message=failure_reason,
+                        business_profile_id=business_profile.id,
                         sent_at=utc_now()
                     )
 
@@ -1430,7 +1472,7 @@ def run_campaign(
                         request=request,
                         target_type="firm",
                         target_id=firm.id,
-                        details={"email": firm.email, "subject": subject, "source": "run_campaign", "error": failure_reason},
+                        details={"email": firm.email, "subject": subject, "source": "run_campaign", "error": failure_reason, "business_profile_id": business_profile.id},
                     )
                     db.commit()
                 except Exception:
@@ -1476,8 +1518,13 @@ def run_campaign(
 
 
 @router.get("/firms/{firm_id}/generate-email/")
-def generate_email_for_firm(firm_id: int, db: Session = Depends(get_db)):
+def generate_email_for_firm(
+    firm_id: int,
+    business_profile_id: int | None = None,
+    db: Session = Depends(get_db),
+):
     firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
+    business_profile = get_business_profile_or_default(db, business_profile_id)
 
     if not firm:
         return {"success": False, "error": "Firm not found"}
@@ -1485,7 +1532,8 @@ def generate_email_for_firm(firm_id: int, db: Session = Depends(get_db)):
     return generate_outreach_email(
         firm_name=firm.firm_name,
         city=firm.city,
-        practice_area=firm.practice_area
+        practice_area=firm.practice_area,
+        business_profile=business_profile,
     )
 
 
@@ -1494,10 +1542,12 @@ def send_test_email_for_firm(
     firm_id: int,
     test_email: str,
     request: Request,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
     firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
+    business_profile = get_business_profile_or_default(db, business_profile_id)
 
     if not firm:
         return {"success": False, "error": "Firm not found"}
@@ -1505,14 +1555,16 @@ def send_test_email_for_firm(
     generated = generate_outreach_email(
         firm_name=firm.firm_name,
         city=firm.city,
-        practice_area=firm.practice_area
+        practice_area=firm.practice_area,
+        business_profile=business_profile,
     )
 
     try:
         send_email(
             to_email=test_email,
             subject=generated["subject"],
-            body=generated["body"]
+            body=generated["body"],
+            business_profile=business_profile,
         )
     except Exception as e:
         failure_reason = email_failure_reason(e)
@@ -1523,6 +1575,7 @@ def send_test_email_for_firm(
             subject=generated["subject"],
             status="Failed",
             error_message=failure_reason,
+            business_profile_id=business_profile.id,
             sent_at=utc_now()
         )
 
@@ -1553,10 +1606,12 @@ def send_test_email_for_firm(
 def send_outreach_email(
     firm_id: int,
     request: Request,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
     firm = db.query(models.Firm).filter(models.Firm.id == firm_id).first()
+    business_profile = get_business_profile_or_default(db, business_profile_id)
 
     if not firm:
         return {"success": False, "error": "Firm not found"}
@@ -1570,7 +1625,8 @@ def send_outreach_email(
     generated = generate_outreach_email(
         firm_name=firm.firm_name,
         city=firm.city,
-        practice_area=firm.practice_area
+        practice_area=firm.practice_area,
+        business_profile=business_profile,
     )
 
     try:
@@ -1579,7 +1635,8 @@ def send_outreach_email(
         send_email(
             to_email=firm.email,
             subject=generated["subject"],
-            body=generated["body"]
+            body=generated["body"],
+            business_profile=business_profile,
         )
 
         log = models.EmailLog(
@@ -1589,6 +1646,7 @@ def send_outreach_email(
             subject=generated["subject"],
             status="Sent",
             error_message=None,
+            business_profile_id=business_profile.id,
             sent_at=sent_at
         )
 
@@ -1601,7 +1659,7 @@ def send_outreach_email(
             request=request,
             target_type="firm",
             target_id=firm.id,
-            details={"email": firm.email, "subject": generated["subject"], "source": "single_outreach"},
+            details={"email": firm.email, "subject": generated["subject"], "source": "single_outreach", "business_profile_id": business_profile.id},
         )
         db.commit()
 
@@ -1620,6 +1678,7 @@ def send_outreach_email(
             subject=generated["subject"],
             status="Failed",
             error_message=failure_reason,
+            business_profile_id=business_profile.id,
             sent_at=utc_now()
         )
 
@@ -1631,7 +1690,7 @@ def send_outreach_email(
             request=request,
             target_type="firm",
             target_id=firm.id,
-            details={"email": firm.email, "subject": generated["subject"], "source": "single_outreach", "error": failure_reason},
+            details={"email": firm.email, "subject": generated["subject"], "source": "single_outreach", "error": failure_reason, "business_profile_id": business_profile.id},
         )
         db.commit()
 
@@ -1645,6 +1704,7 @@ def send_outreach_email(
 def send_follow_up_email(
     firm_id: int,
     request: Request,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
@@ -1666,7 +1726,8 @@ def send_follow_up_email(
             firm.email,
             current_user.email,
         )
-        result = send_follow_up_for_firm(firm, db, actor=current_user, request=request)
+        business_profile = get_business_profile_or_default(db, business_profile_id)
+        result = send_follow_up_for_firm(firm, db, actor=current_user, request=request, business_profile=business_profile)
 
         if not result["success"]:
             raise HTTPException(status_code=400, detail=result["error"])
@@ -1697,9 +1758,11 @@ def send_batch_outreach(
     request: Request,
     limit: int = 3,
     delay_seconds: int = 10,
+    business_profile_id: int | None = None,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(require_min_role("manager")),
 ):
+    business_profile = get_business_profile_or_default(db, business_profile_id)
     firms = db.query(models.Firm).filter(
         models.Firm.email.isnot(None),
         models.Firm.status != "Email Sent"
@@ -1713,14 +1776,16 @@ def send_batch_outreach(
         generated = generate_outreach_email(
             firm_name=firm.firm_name,
             city=firm.city,
-            practice_area=firm.practice_area
+            practice_area=firm.practice_area,
+            business_profile=business_profile,
         )
 
         try:
             send_email(
                 to_email=firm.email,
                 subject=generated["subject"],
-                body=generated["body"]
+                body=generated["body"],
+                business_profile=business_profile,
             )
 
             log = models.EmailLog(
@@ -1730,6 +1795,7 @@ def send_batch_outreach(
                 subject=generated["subject"],
                 status="Sent",
                 error_message=None,
+                business_profile_id=business_profile.id,
                 sent_at=sent_at
             )
 
@@ -1742,7 +1808,7 @@ def send_batch_outreach(
                 request=request,
                 target_type="firm",
                 target_id=firm.id,
-                details={"email": firm.email, "subject": generated["subject"], "source": "batch_outreach"},
+                details={"email": firm.email, "subject": generated["subject"], "source": "batch_outreach", "business_profile_id": business_profile.id},
             )
             db.commit()
 
@@ -1762,6 +1828,7 @@ def send_batch_outreach(
                 subject=generated["subject"],
                 status="Failed",
                 error_message=failure_reason,
+                business_profile_id=business_profile.id,
                 sent_at=utc_now()
             )
 
@@ -1773,7 +1840,7 @@ def send_batch_outreach(
                 request=request,
                 target_type="firm",
                 target_id=firm.id,
-                details={"email": firm.email, "subject": generated["subject"], "source": "batch_outreach", "error": failure_reason},
+                details={"email": firm.email, "subject": generated["subject"], "source": "batch_outreach", "error": failure_reason, "business_profile_id": business_profile.id},
             )
             db.commit()
 

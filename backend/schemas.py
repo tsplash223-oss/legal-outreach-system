@@ -105,6 +105,7 @@ class EmailTemplateBase(BaseModel):
     subject: str
     body_text: str
     is_active: bool = False
+    business_profile_id: int | None = None
 
 
 class EmailTemplateCreate(EmailTemplateBase):
@@ -116,13 +117,88 @@ class EmailTemplateUpdate(BaseModel):
     subject: str | None = None
     body_text: str | None = None
     is_active: bool | None = None
+    business_profile_id: int | None = None
 
 
 class EmailTemplateResponse(EmailTemplateBase):
     id: int
+    business_profile_id: int | None = None
     updated_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class BusinessProfileBase(BaseModel):
+    name: str
+    sender_email: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    address: str | None = None
+    signature_html: str | None = None
+    default_template_subject: str | None = None
+    default_template_body: str | None = None
+    gmail_credentials_env_key: str | None = None
+    gmail_token_env_key: str | None = None
+    is_active: bool = True
+
+    @field_validator("name")
+    @classmethod
+    def validate_business_profile_name(cls, value: str):
+        cleaned = (value or "").strip()
+        if not cleaned:
+            raise ValueError("Business profile name is required")
+        return cleaned
+
+    @field_validator(
+        "sender_email",
+        "phone",
+        "website",
+        "address",
+        "signature_html",
+        "default_template_subject",
+        "default_template_body",
+        "gmail_credentials_env_key",
+        "gmail_token_env_key",
+        mode="before",
+    )
+    @classmethod
+    def normalize_optional_business_text(cls, value):
+        if value is None:
+            return None
+        cleaned = str(value).strip()
+        return cleaned or None
+
+
+class BusinessProfileCreate(BusinessProfileBase):
+    pass
+
+
+class BusinessProfileUpdate(BaseModel):
+    name: str | None = None
+    sender_email: str | None = None
+    phone: str | None = None
+    website: str | None = None
+    address: str | None = None
+    signature_html: str | None = None
+    default_template_subject: str | None = None
+    default_template_body: str | None = None
+    gmail_credentials_env_key: str | None = None
+    gmail_token_env_key: str | None = None
+    is_active: bool | None = None
+
+
+class BusinessProfileResponse(BusinessProfileBase):
+    id: int
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class BusinessProfileOption(BaseModel):
+    id: int
+    name: str
+    is_default: bool = False
 
 
 class LoginRequest(BaseModel):

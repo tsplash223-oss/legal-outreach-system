@@ -7,9 +7,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from business_profiles import bootstrap_default_business_profiles
 from database import DATABASE_URL, IS_POSTGRESQL, engine, Base, repair_postgresql_id_sequences
 import models
-from routers import auth, firms, newsletters
+from routers import auth, business_profiles, firms, newsletters
 from security import hash_password, normalize_email
 from services.email_sender import check_smtp_config
 from services.gmail_reply_tracker import ensure_gmail_api_files_from_env
@@ -44,6 +45,7 @@ def bootstrap_admin_from_env():
 
 
 bootstrap_admin_from_env()
+bootstrap_default_business_profiles()
 gmail_file_errors = ensure_gmail_api_files_from_env()
 for gmail_file_error in gmail_file_errors:
     logger.warning("Gmail reply tracking configuration: %s", gmail_file_error)
@@ -74,6 +76,7 @@ async def log_unhandled_errors(request: Request, call_next):
 
 
 app.include_router(auth.router)
+app.include_router(business_profiles.router)
 app.include_router(firms.router)
 app.include_router(newsletters.router)
 

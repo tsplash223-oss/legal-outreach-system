@@ -43,6 +43,8 @@ class EmailLog(Base):
 
     firm_id = Column(Integer, ForeignKey("firms.id"))
 
+    business_profile_id = Column(Integer, ForeignKey("business_profiles.id"), nullable=True)
+
     firm_name = Column(String)
 
     email = Column(String)
@@ -60,6 +62,8 @@ class EmailTemplate(Base):
     __tablename__ = "email_templates"
 
     id = Column(Integer, primary_key=True, index=True)
+
+    business_profile_id = Column(Integer, ForeignKey("business_profiles.id"), nullable=True)
 
     name = Column(String, index=True)
 
@@ -84,6 +88,8 @@ class NewsletterDraft(Base):
     __tablename__ = "newsletter_drafts"
 
     id = Column(Integer, primary_key=True, index=True)
+
+    business_profile_id = Column(Integer, ForeignKey("business_profiles.id"), nullable=True)
 
     title = Column(String, index=True)
 
@@ -110,6 +116,25 @@ class User(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)
+
+
+class BusinessProfile(Base):
+    __tablename__ = "business_profiles"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    sender_email = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    website = Column(String, nullable=True)
+    address = Column(Text, nullable=True)
+    signature_html = Column(Text, nullable=True)
+    default_template_subject = Column(String, nullable=True)
+    default_template_body = Column(Text, nullable=True)
+    gmail_credentials_env_key = Column(String, nullable=True)
+    gmail_token_env_key = Column(String, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class AuditLog(Base):

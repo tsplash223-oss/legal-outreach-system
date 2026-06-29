@@ -11,10 +11,14 @@ from email.mime.image import MIMEImage
 from dotenv import load_dotenv
 from services.gmail_reply_tracker import (
     CREDENTIALS_PATH,
+    GMAIL_CREDENTIALS_ENV,
+    GMAIL_TOKEN_ENV,
     TOKEN_PATH,
     ensure_gmail_api_files_from_env,
+    gmail_file_config_for_profile,
     import_gmail_dependencies,
 )
+from business_profiles import GMAIL_PROFILE_NOT_CONFIGURED_MESSAGE
 
 load_dotenv()
 
@@ -104,9 +108,10 @@ def check_smtp_config():
     }
 
 
-def is_gmail_api_send_configured():
-    errors = ensure_gmail_api_files_from_env()
-    return not errors and CREDENTIALS_PATH.exists() and TOKEN_PATH.exists()
+def is_gmail_api_send_configured(business_profile=None):
+    credentials_env_key, token_env_key, credentials_path, token_path, allow_legacy_files = gmail_file_config_for_profile(business_profile)
+    errors = ensure_gmail_api_files_from_env(credentials_env_key, token_env_key, credentials_path, token_path)
+    return not errors and credentials_path.exists() and token_path.exists()
 
 
 def html_to_plain_text(html):
@@ -146,8 +151,12 @@ def build_email_message(sender_email, to_email, subject, html_body, plain_text_b
     return msg
 
 
-def get_gmail_send_service():
-    if not is_gmail_api_send_configured():
+def get_gmail_send_service(business_profile=None):
+    credentials_env_key, token_env_key, credentials_path, token_path, allow_legacy_files = gmail_file_config_for_profile(business_profile)
+
+    if not is_gmail_api_send_configured(business_profile):
+        if business_profile and not allow_legacy_files:
+            raise GmailApiNotConfigured(GMAIL_PROFILE_NOT_CONFIGURED_MESSAGE)
         raise GmailApiNotConfigured("Gmail API credentials/token are not configured.")
 
     deps, error = import_gmail_dependencies()
@@ -160,7 +169,7 @@ def get_gmail_send_service():
     build = deps["build"]
 
     try:
-        credentials = Credentials.from_authorized_user_file(str(TOKEN_PATH), GMAIL_SEND_SCOPES)
+        credentials = Credentials.from_authorized_user_file(str(token_path), GMAIL_SEND_SCOPES)
         granted_scopes = set(credentials.granted_scopes or credentials.scopes or [])
         if granted_scopes and GMAIL_SEND_SCOPES[0] not in granted_scopes:
             raise EmailSendError(GMAIL_API_SCOPE_ERROR)
@@ -169,10 +178,10 @@ def get_gmail_send_service():
             if credentials and credentials.expired and credentials.refresh_token:
                 credentials.refresh(Request())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), GMAIL_SEND_SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), GMAIL_SEND_SCOPES)
                 credentials = flow.run_local_server(port=0)
 
-            TOKEN_PATH.write_text(credentials.to_json(), encoding="utf-8")
+            token_path.write_text(credentials.to_json(), encoding="utf-8")
 
         return build("gmail", "v1", credentials=credentials)
     except EmailSendError:
@@ -223,12 +232,12 @@ def log_smtp_config_status():
     )
 
 
-def send_email(to_email, subject, body, plain_text_body=None):
+def send_email(to_email, subject, body, plain_text_body=None, business_profile=None):
     gmail_address, gmail_password = get_smtp_credentials()
 
-    if is_gmail_api_send_configured():
-        service = get_gmail_send_service()
-        sender_email = gmail_address or get_gmail_profile_email(service)
+    if is_gmail_api_send_configured(business_profile):
+        service = get_gmail_send_service(business_profile)
+        sender_email = (getattr(business_profile, "sender_email", "") or "").strip() or gmail_address or get_gmail_profile_email(service)
         if not sender_email:
             raise EmailSendError(GMAIL_API_CONFIGURATION_ERROR)
 
@@ -236,6 +245,10 @@ def send_email(to_email, subject, body, plain_text_body=None):
         logger.info("Sending email with Gmail API to %s", to_email)
         send_email_with_gmail_api(service, msg)
         return True
+
+    _, _, _, _, allow_legacy_files = gmail_file_config_for_profile(business_profile)
+    if business_profile and not allow_legacy_files:
+        raise EmailSendError(GMAIL_PROFILE_NOT_CONFIGURED_MESSAGE)
 
     if not gmail_address or not gmail_password:
         log_smtp_config_status()

@@ -323,6 +323,29 @@ h2 {
   justify-content: flex-end;
 }
 
+.business-profile-select {
+  display: grid;
+  gap: 4px;
+  min-width: 260px;
+}
+
+.business-profile-select span,
+.business-profile-select small {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.business-profile-select select {
+  min-height: 42px;
+  border: 1px solid #d8e0dc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #17231d;
+  padding: 0 10px;
+}
+
 .system-status {
   display: flex;
   align-items: center;
@@ -494,6 +517,25 @@ h2 {
   min-height: 42px;
   padding: 0 10px;
   width: 100%;
+}
+
+.business-profile-management {
+  display: grid;
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--line);
+}
+
+.business-profile-form {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.business-profile-wide {
+  grid-column: 1 / -1;
 }
 
 .account-details-card {

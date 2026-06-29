@@ -9,5 +9,6 @@ token.json
 backend/.env
 backend/credentials.json
 backend/token.json
+backend/.gmail_profiles/
 backend/firms.db
 backend/backups/

@@ -118,17 +118,34 @@ def is_official_template(body_text):
     return all(part in (body_text or "") for part in required_parts)
 
 
-def get_active_template():
+def get_active_template(business_profile_id: int | None = None):
     db = SessionLocal()
 
     try:
-        template = db.query(models.EmailTemplate).filter(models.EmailTemplate.is_active.is_(True)).first()
+        query = db.query(models.EmailTemplate).filter(models.EmailTemplate.is_active.is_(True))
+        if business_profile_id:
+            query = query.filter(models.EmailTemplate.business_profile_id == business_profile_id)
+        else:
+            query = query.filter(models.EmailTemplate.business_profile_id.is_(None))
+
+        template = query.first()
+        profile = None
+
+        if business_profile_id:
+            profile = db.query(models.BusinessProfile).filter(models.BusinessProfile.id == business_profile_id).first()
 
         if not template:
+            if profile:
+                return {
+                    "subject": profile.default_template_subject or DEFAULT_SUBJECT,
+                    "body_text": profile.default_template_body or DEFAULT_BODY_TEXT,
+                }
+
             template = models.EmailTemplate(
                 name="Main outreach letter",
                 subject=DEFAULT_SUBJECT,
                 body_html=DEFAULT_BODY_TEXT,
+                business_profile_id=business_profile_id,
                 is_active=True
             )
             db.add(template)
@@ -148,14 +165,15 @@ def get_active_template():
         db.close()
 
 
-def generate_outreach_email(firm_name, city, practice_area):
+def generate_outreach_email(firm_name, city, practice_area, business_profile=None):
     variables = {
         "firm_name": firm_name or "Your Firm",
         "city": city or "your area",
         "practice_area": practice_area or "your practice area",
     }
 
-    template = get_active_template()
+    business_profile_id = getattr(business_profile, "id", None)
+    template = get_active_template(business_profile_id)
     subject = template["subject"] if template else DEFAULT_SUBJECT
     body_text = template["body_text"] if template else DEFAULT_BODY_TEXT
     body_text = body_text.replace("Dear {firm_name} Team,", "Dear {firm_name},")

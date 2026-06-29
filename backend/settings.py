@@ -22,6 +22,14 @@ class Settings:
             for origin in os.getenv("CORS_ORIGINS", "").split(",")
             if origin.strip()
         ]
+        # Railway variables for Gmail API JSON values:
+        # Drivers Ed profile: GREENLIGHT_GMAIL_CREDENTIALS_JSON / GREENLIGHT_GMAIL_TOKEN_JSON.
+        # Hope Foundation profile: HOPE_GMAIL_CREDENTIALS_JSON / HOPE_GMAIL_TOKEN_JSON.
+        # Legacy fallback for the Drivers Ed profile remains GMAIL_CREDENTIALS_JSON / GMAIL_TOKEN_JSON.
+        self.greenlight_gmail_credentials_json_present = bool(os.getenv("GREENLIGHT_GMAIL_CREDENTIALS_JSON", "").strip())
+        self.greenlight_gmail_token_json_present = bool(os.getenv("GREENLIGHT_GMAIL_TOKEN_JSON", "").strip())
+        self.hope_gmail_credentials_json_present = bool(os.getenv("HOPE_GMAIL_CREDENTIALS_JSON", "").strip())
+        self.hope_gmail_token_json_present = bool(os.getenv("HOPE_GMAIL_TOKEN_JSON", "").strip())
 
     @property
     def is_production(self):

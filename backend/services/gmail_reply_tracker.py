@@ -5,12 +5,14 @@ from email.utils import parsedate_to_datetime, parseaddr
 from pathlib import Path
 
 import models
+from business_profiles import DRIVERS_ED_PROFILE_NAME, GMAIL_PROFILE_NOT_CONFIGURED_MESSAGE
 
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 CREDENTIALS_PATH = BACKEND_DIR / "credentials.json"
 TOKEN_PATH = BACKEND_DIR / "token.json"
+PROFILE_GMAIL_DIR = BACKEND_DIR / ".gmail_profiles"
 GMAIL_CREDENTIALS_ENV = "GMAIL_CREDENTIALS_JSON"
 GMAIL_TOKEN_ENV = "GMAIL_TOKEN_JSON"
 MAX_MESSAGES = 500
@@ -44,12 +46,12 @@ def restore_json_file_from_env(path: Path, env_name: str):
     return None
 
 
-def ensure_gmail_api_files_from_env():
+def ensure_gmail_api_files_from_env(credentials_env_key=GMAIL_CREDENTIALS_ENV, token_env_key=GMAIL_TOKEN_ENV, credentials_path=CREDENTIALS_PATH, token_path=TOKEN_PATH):
     errors = [
         error
         for error in (
-            restore_json_file_from_env(CREDENTIALS_PATH, GMAIL_CREDENTIALS_ENV),
-            restore_json_file_from_env(TOKEN_PATH, GMAIL_TOKEN_ENV),
+            restore_json_file_from_env(credentials_path, credentials_env_key),
+            restore_json_file_from_env(token_path, token_env_key),
         )
         if error
     ]
@@ -57,27 +59,64 @@ def ensure_gmail_api_files_from_env():
     return errors
 
 
-def gmail_configuration_error():
-    errors = ensure_gmail_api_files_from_env()
+def profile_secret_path(profile, suffix: str):
+    env_key = (getattr(profile, f"gmail_{suffix}_env_key", "") or f"profile_{profile.id}_{suffix}").lower()
+    safe_key = "".join(character if character.isalnum() else "_" for character in env_key)
+    PROFILE_GMAIL_DIR.mkdir(parents=True, exist_ok=True)
+    return PROFILE_GMAIL_DIR / f"{profile.id}_{safe_key}.json"
+
+
+def gmail_file_config_for_profile(profile=None):
+    if not profile:
+        return GMAIL_CREDENTIALS_ENV, GMAIL_TOKEN_ENV, CREDENTIALS_PATH, TOKEN_PATH, True
+
+    credentials_env_key = profile.gmail_credentials_env_key or GMAIL_CREDENTIALS_ENV
+    token_env_key = profile.gmail_token_env_key or GMAIL_TOKEN_ENV
+    uses_default_files = credentials_env_key == GMAIL_CREDENTIALS_ENV and token_env_key == GMAIL_TOKEN_ENV
+
+    if uses_default_files:
+        return credentials_env_key, token_env_key, CREDENTIALS_PATH, TOKEN_PATH, True
+
+    is_drivers_ed_profile = getattr(profile, "name", "") == DRIVERS_ED_PROFILE_NAME
+    profile_env_present = bool(os.getenv(credentials_env_key, "").strip()) and bool(os.getenv(token_env_key, "").strip())
+    legacy_env_present = bool(os.getenv(GMAIL_CREDENTIALS_ENV, "").strip()) and bool(os.getenv(GMAIL_TOKEN_ENV, "").strip())
+    if is_drivers_ed_profile and not profile_env_present and (legacy_env_present or (CREDENTIALS_PATH.exists() and TOKEN_PATH.exists())):
+        return GMAIL_CREDENTIALS_ENV, GMAIL_TOKEN_ENV, CREDENTIALS_PATH, TOKEN_PATH, True
+
+    return (
+        credentials_env_key,
+        token_env_key,
+        profile_secret_path(profile, "credentials"),
+        profile_secret_path(profile, "token"),
+        False,
+    )
+
+
+def gmail_configuration_error(profile=None):
+    credentials_env_key, token_env_key, credentials_path, token_path, allow_legacy_files = gmail_file_config_for_profile(profile)
+    errors = ensure_gmail_api_files_from_env(credentials_env_key, token_env_key, credentials_path, token_path)
 
     if errors:
+        if profile and not allow_legacy_files:
+            return base_error(GMAIL_PROFILE_NOT_CONFIGURED_MESSAGE)
+
         return base_error(
             (
                 "Gmail API reply tracking is not configured. "
-                "Set GMAIL_CREDENTIALS_JSON and GMAIL_TOKEN_JSON in the backend environment, "
+                f"Set {credentials_env_key} and {token_env_key} in the backend environment, "
                 "or provide backend/credentials.json and backend/token.json for local development. "
                 + " ".join(errors)
             )
         )
 
-    if not CREDENTIALS_PATH.exists():
+    if not credentials_path.exists():
         return base_error(
-            "Gmail API credentials.json is missing. Set GMAIL_CREDENTIALS_JSON or add backend/credentials.json."
+            f"Gmail API credentials are missing. Set {credentials_env_key}."
         )
 
-    if not TOKEN_PATH.exists():
+    if not token_path.exists():
         return base_error(
-            "Gmail API token.json is missing. Set GMAIL_TOKEN_JSON or add backend/token.json."
+            f"Gmail API token is missing. Set {token_env_key}."
         )
 
     return None
@@ -162,8 +201,8 @@ def import_gmail_dependencies():
     }, None
 
 
-def get_gmail_service():
-    configuration_error = gmail_configuration_error()
+def get_gmail_service(profile=None):
+    configuration_error = gmail_configuration_error(profile)
     if configuration_error:
         return None, configuration_error
 
@@ -177,19 +216,20 @@ def get_gmail_service():
     build = deps["build"]
 
     credentials = None
+    _, _, credentials_path, token_path, _ = gmail_file_config_for_profile(profile)
 
     try:
-        if TOKEN_PATH.exists():
-            credentials = Credentials.from_authorized_user_file(str(TOKEN_PATH), SCOPES)
+        if token_path.exists():
+            credentials = Credentials.from_authorized_user_file(str(token_path), SCOPES)
 
         if not credentials or not credentials.valid:
             if credentials and credentials.expired and credentials.refresh_token:
                 credentials.refresh(Request())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_PATH), SCOPES)
+                flow = InstalledAppFlow.from_client_secrets_file(str(credentials_path), SCOPES)
                 credentials = flow.run_local_server(port=0)
 
-            TOKEN_PATH.write_text(credentials.to_json(), encoding="utf-8")
+            token_path.write_text(credentials.to_json(), encoding="utf-8")
 
         return build("gmail", "v1", credentials=credentials), None
     except Exception as exc:
@@ -279,8 +319,8 @@ def is_reply_message(subject, message, sender_email, business_email, firms_by_em
     )
 
 
-def check_gmail_replies(db):
-    service, error = get_gmail_service()
+def check_gmail_replies(db, business_profile=None):
+    service, error = get_gmail_service(business_profile)
     if error:
         return error
 
