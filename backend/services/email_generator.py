@@ -151,7 +151,7 @@ def get_active_template(business_profile_id: int | None = None):
             db.add(template)
             db.commit()
             db.refresh(template)
-        elif not is_official_template(template.body_text):
+        elif (not profile or profile.name == "Green Light Drivers Ed & DUI School LLC") and not is_official_template(template.body_text):
             template.subject = DEFAULT_SUBJECT
             template.body_html = DEFAULT_BODY_TEXT
             db.commit()
@@ -166,17 +166,22 @@ def get_active_template(business_profile_id: int | None = None):
 
 
 def generate_outreach_email(firm_name, city, practice_area, business_profile=None):
-    variables = {
-        "firm_name": firm_name or "Your Firm",
-        "city": city or "your area",
-        "practice_area": practice_area or "your practice area",
-    }
-
     business_profile_id = getattr(business_profile, "id", None)
+    is_hope_profile = getattr(business_profile, "name", "") == "Greenlight Hope Foundation"
+    variables = (
+        {"Recipient Name": firm_name or "Recipient"}
+        if is_hope_profile
+        else {
+            "firm_name": firm_name or "Your Firm",
+            "city": city or "your area",
+            "practice_area": practice_area or "your practice area",
+        }
+    )
     template = get_active_template(business_profile_id)
     subject = template["subject"] if template else DEFAULT_SUBJECT
     body_text = template["body_text"] if template else DEFAULT_BODY_TEXT
-    body_text = body_text.replace("Dear {firm_name} Team,", "Dear {firm_name},")
+    if not is_hope_profile:
+        body_text = body_text.replace("Dear {firm_name} Team,", "Dear {firm_name},")
     rendered_body_text = render_template_text(body_text, variables)
 
     return {

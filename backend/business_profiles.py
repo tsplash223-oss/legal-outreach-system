@@ -9,6 +9,26 @@ from services.email_generator import DEFAULT_BODY_TEXT, DEFAULT_SUBJECT
 DRIVERS_ED_PROFILE_NAME = "Green Light Drivers Ed & DUI School LLC"
 HOPE_PROFILE_NAME = "Greenlight Hope Foundation"
 GMAIL_PROFILE_NOT_CONFIGURED_MESSAGE = "Gmail credentials are not configured for this business profile."
+HOPE_TEMPLATE_NAME = "Hope Foundation Introduction"
+HOPE_TEMPLATE_SUBJECT = "Green Light Hope Foundation Inc."
+HOPE_TEMPLATE_BODY = """Dear {Recipient Name},
+
+We write to introduce Green Light Hope Foundation Inc (https://www.greenlighthopefoundation.com) to you as a Non-Profit Organization, founded and incorporated in the USA as a 501(c)(3), committed to building stronger, healthier, and safer communities through education, outreach, and compassionate support. From promoting safe driving and mental wellness to assisting vulnerable families and expanding access to essential resources, we work alongside individuals and communities to create lasting, positive change.
+
+We welcome volunteers, professionals, and companies looking to contribute to safe driving, Mental wellness, homelessness solutions, family supports, and programs that promote the overall wellness of families.
+
+We accept donations in all forms, including programs, resources, materials, and monetary donations, to help us achieve our goals year in and year out. We issue receipts for all donations, duly acknowledged and received for tax purposes, which are tax-deductible.
+
+We ensure transparency, accountability, and proper documentation for your records.
+
+Kindly support us.
+
+Visit our website at https://www.greenlighthopefoundation.com.
+
+Thank you.
+
+CEO
+Dr. Atilade O Oshoniyi"""
 
 
 DEFAULT_BUSINESS_PROFILES = [
@@ -32,16 +52,8 @@ DEFAULT_BUSINESS_PROFILES = [
         "website": "",
         "address": "",
         "signature_html": "",
-        "default_template_subject": "Professional Introduction - Greenlight Hope Foundation",
-        "default_template_body": """Dear {firm_name},
-
-We are reaching out to introduce Greenlight Hope Foundation and the community-focused work we support.
-
-Please let us know if your office would like additional information.
-
-Sincerely,
-
-Greenlight Hope Foundation""",
+        "default_template_subject": HOPE_TEMPLATE_SUBJECT,
+        "default_template_body": HOPE_TEMPLATE_BODY,
         "gmail_credentials_env_key": "HOPE_GMAIL_CREDENTIALS_JSON",
         "gmail_token_env_key": "HOPE_GMAIL_TOKEN_JSON",
         "is_active": True,
@@ -113,6 +125,48 @@ def bootstrap_default_business_profiles():
                 db.query(model).filter(model.business_profile_id.is_(None)).update(
                     {model.business_profile_id: default_profile.id}
                 )
+
+        hope_profile = db.query(models.BusinessProfile).filter(
+            models.BusinessProfile.name == HOPE_PROFILE_NAME
+        ).first()
+        if hope_profile:
+            hope_profile.default_template_subject = HOPE_TEMPLATE_SUBJECT
+            hope_profile.default_template_body = HOPE_TEMPLATE_BODY
+
+            hope_template = db.query(models.EmailTemplate).filter(
+                models.EmailTemplate.business_profile_id == hope_profile.id,
+                models.EmailTemplate.name == HOPE_TEMPLATE_NAME,
+            ).first()
+            active_hope_template = db.query(models.EmailTemplate).filter(
+                models.EmailTemplate.business_profile_id == hope_profile.id,
+                models.EmailTemplate.is_active.is_(True),
+            ).first()
+            should_activate_exact_template = (
+                active_hope_template is None
+                or active_hope_template.name == "Main outreach letter"
+                or "community-focused work we support" in (active_hope_template.body_text or "")
+            )
+
+            if not hope_template:
+                hope_template = models.EmailTemplate(
+                    name=HOPE_TEMPLATE_NAME,
+                    subject=HOPE_TEMPLATE_SUBJECT,
+                    body_html=HOPE_TEMPLATE_BODY,
+                    business_profile_id=hope_profile.id,
+                    is_active=should_activate_exact_template,
+                )
+                db.add(hope_template)
+            else:
+                hope_template.subject = HOPE_TEMPLATE_SUBJECT
+                hope_template.body_html = HOPE_TEMPLATE_BODY
+                if should_activate_exact_template:
+                    hope_template.is_active = True
+
+            if should_activate_exact_template:
+                db.query(models.EmailTemplate).filter(
+                    models.EmailTemplate.business_profile_id == hope_profile.id,
+                    models.EmailTemplate.name != HOPE_TEMPLATE_NAME,
+                ).update({models.EmailTemplate.is_active: False})
 
         db.commit()
 
